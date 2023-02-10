@@ -1,8 +1,6 @@
-use bevy::pbr::wireframe::{Wireframe, WireframeConfig, WireframePlugin};
+use bevy::pbr::wireframe::{Wireframe, WireframePlugin};
 use bevy::prelude::*;
 use bevy::render::mesh::{self, PrimitiveTopology};
-use bevy::render::{render_resource::WgpuFeatures, settings::WgpuSettings, RenderPlugin};
-use std::f32::consts::PI;
 
 fn main() {
     App::new()
