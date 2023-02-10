@@ -32,6 +32,7 @@ fn setup(
 
     let mut rdr = csv::ReaderBuilder::new()
         .has_headers(false)
+		.comment(Some(b'#'))
         .trim(csv::Trim::All)
         .from_path("./points.csv")
         .unwrap();
