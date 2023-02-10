@@ -2,6 +2,9 @@ use bevy::pbr::wireframe::{Wireframe, WireframePlugin};
 use bevy::prelude::*;
 use bevy::render::mesh::{self, PrimitiveTopology};
 
+use serde::Deserialize;
+use serde::Serialize;
+
 fn main() {
     App::new()
         .insert_resource(Msaa { samples: 4 })
@@ -11,6 +14,15 @@ fn main() {
         .run();
 }
 
+#[derive(Serialize, Deserialize, Debug, Clone, Copy)]
+struct Triangle([f32; 3], [f32; 3], [f32; 3]);
+
+impl Triangle {
+    fn points(self) -> [[[f32; 3]; 3]; 2] {
+        [[self.0, self.1, self.2], [self.0, self.2, self.1]]
+    }
+}
+
 fn setup(
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
@@ -18,14 +30,19 @@ fn setup(
 ) {
     let mut mesh = Mesh::new(PrimitiveTopology::TriangleList);
 
-    let verts = vec![
-        [0., 0., 0.],
-        [-0.5, 0.866, 0.],
-        [-1., 0., 0.],
-        [0., 0., 0.],
-        [0.5, 0.866, 0.],
-        [-0.5, 0.866, 0.],
-    ];
+    let mut rdr = csv::ReaderBuilder::new()
+        .has_headers(false)
+        .trim(csv::Trim::All)
+        .from_path("./points.csv")
+        .unwrap();
+    let verts = rdr
+        .deserialize::<Triangle>()
+        .map(Result::unwrap)
+        .map(Triangle::points)
+        .collect::<Vec<[[[f32; 3]; 3]; 2]>>()
+        .concat() //Vec<[[f32; 3]; 3]>
+        .concat(); //Vec<[f32; 3]>
+
     let indices: Vec<u32> = (0..verts.len() as u32).collect();
 
     mesh.insert_attribute(Mesh::ATTRIBUTE_POSITION, verts);

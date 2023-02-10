@@ -12,3 +12,5 @@ bevy_input = "0.9.1"
 bevy_math = "0.9.1"
 bevy_render = "0.9.1"
 bevy_transform = "0.9.1"
+csv = "1.1.6"
+serde = { version = "1.0.152", features = ["derive"] }
