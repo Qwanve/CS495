@@ -14,11 +14,12 @@ fn main() {
         .run();
 }
 
+type Point = [f32; 3];
 #[derive(Serialize, Deserialize, Debug, Clone, Copy)]
-struct Triangle([f32; 3], [f32; 3], [f32; 3]);
+struct Triangle(Point, Point, Point);
 
 impl Triangle {
-    fn points(self) -> [[[f32; 3]; 3]; 2] {
+    fn points(self) -> [[Point; 3]; 2] {
         [[self.0, self.1, self.2], [self.0, self.2, self.1]]
     }
 }
