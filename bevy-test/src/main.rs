@@ -1,8 +1,8 @@
-use std::f32::consts::PI;
+use bevy::pbr::wireframe::{Wireframe, WireframeConfig, WireframePlugin};
 use bevy::prelude::*;
 use bevy::render::mesh::{self, PrimitiveTopology};
-use bevy::pbr::wireframe::{Wireframe, WireframeConfig, WireframePlugin};
 use bevy::render::{render_resource::WgpuFeatures, settings::WgpuSettings, RenderPlugin};
+use std::f32::consts::PI;
 
 fn main() {
     App::new()
@@ -20,23 +20,28 @@ fn setup(
 ) {
     let mut mesh = Mesh::new(PrimitiveTopology::TriangleList);
 
-
-
-    let verts = vec![[0., 0., 0.], [-0.5, 0.866, 0.], [-1., 0., 0.], [0., 0., 0.], [0.5, 0.866, 0.], [-0.5, 0.866, 0.]];
+    let verts = vec![
+        [0., 0., 0.],
+        [-0.5, 0.866, 0.],
+        [-1., 0., 0.],
+        [0., 0., 0.],
+        [0.5, 0.866, 0.],
+        [-0.5, 0.866, 0.],
+    ];
     let indices: Vec<u32> = (0..verts.len() as u32).collect();
 
-    mesh.insert_attribute(
-        Mesh::ATTRIBUTE_POSITION,
-        verts,
-    );
+    mesh.insert_attribute(Mesh::ATTRIBUTE_POSITION, verts);
 
     mesh.set_indices(Some(mesh::Indices::U32(indices)));
 
-    commands.spawn((PbrBundle {
-        mesh: meshes.add(mesh),
-        material: materials.add(Color::rgba(0.3, 0.5, 0.3, 0.0).into()),
-        ..default()
-    }, Wireframe, ));
+    commands.spawn((
+        PbrBundle {
+            mesh: meshes.add(mesh),
+            material: materials.add(Color::rgba(0.3, 0.5, 0.3, 0.0).into()),
+            ..default()
+        },
+        Wireframe,
+    ));
 
     commands.spawn(PointLightBundle {
         point_light: PointLight {
