@@ -110,13 +110,15 @@ fn main() {
 
     let mut points: Vec<Point> = Vec::new();
     let mut pairs: Vec<(usize, usize)> = Vec::new();
+    let mut tris: Vec<(usize, usize, usize)> = Vec::new();
 
     points.push(Point::new(0.0,0.0,0.0));
 
     for i in 1..=7 {
         points.push(sphere_rand(1.0));
-        pairs.push((i, (i+1)%7));
+        pairs.push((i, i%7+1));
         pairs.push((0, i));
+        tris.push((0, i, i%7+1));
     }
 
     for i in 0..21 {
@@ -124,17 +126,19 @@ fn main() {
         let j1 = (i+1)%21+8;
         points.push(sphere_rand(1.0));
         if (i%3 == 0) {
-            pairs.push((j, i/3));
-            pairs.push((j, (i/3+1)%7));
+            pairs.push((j, (i/3+6)%7+1));
+            pairs.push((j, (i/3)%7+1));
+            tris.push((j, (i/3+6)%7+1, (i/3)%7+1));
         }
         else {
-            pairs.push((j, i/3));
+            pairs.push((j, i/3+1));
         }
         pairs.push((j, j1));
+        tris.push((j, j1, i/3+1));
     }
 
 
-    for _ in 0..100000 {
+    for _ in 0..200000 {
         for (a, b) in &pairs {
             let (p1, p2) = move_points(&points[*a], &points[*b]);
             points[*a] = p1;
@@ -143,7 +147,16 @@ fn main() {
     }
 
     for (a, b) in &pairs {
-        println!("Distance: {}", points[*a].distance(&points[*b]));
+        println!("Distance: {}, {} = {}", *a, *b, points[*a].distance(&points[*b]));
+    }
+
+    for (a, b, c) in &tris {
+        let dist1 = points[*a].distance(&points[*b]);
+        let dist2 = points[*b].distance(&points[*c]);
+        let dist3 = points[*c].distance(&points[*a]);
+
+        println!("Triangle: {}, {}, {}", *a, *b, *c);
+        println!("Dists: {}, {}, {}", dist1, dist2, dist3);
     }
 
 }
