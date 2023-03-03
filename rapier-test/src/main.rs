@@ -69,8 +69,19 @@ fn sphere_rand(radius: f32) -> Point {
     Point::new(x, y, z)
 }
 
+fn move_points(p1: &Point, p2: &Point) -> (Point, Point) {
+    let dist = p1.distance(p2);
+    if dist != 1.0 {
+        let scalar = ((1.0 - dist)) * 0.1;
+        let offset1 = (*p1 - *p2).scale(scalar) + sphere_rand(scalar * 0.7);
+        let offset2 = (*p2 - *p1).scale(scalar) + sphere_rand(scalar * 0.7);
+        return (*p1 + offset1, *p2 + offset2)
+    }
+    (*p1, *p2)
+}
+
 fn main() {
-    let center = Point::new(0.0,0.0,0.0);
+    /*let center = Point::new(0.0,0.0,0.0);
 
     let mut ring1: Vec<Point> = Vec::new();
 
@@ -95,12 +106,44 @@ fn main() {
                 ring1[i2] = ring1[i2] + offset2;
             }
         }
+    }*/
+
+    let mut points: Vec<Point> = Vec::new();
+    let mut pairs: Vec<(usize, usize)> = Vec::new();
+
+    points.push(Point::new(0.0,0.0,0.0));
+
+    for i in 1..=7 {
+        points.push(sphere_rand(1.0));
+        pairs.push((i, (i+1)%7));
+        pairs.push((0, i));
     }
 
-    for i in 0..7 {
-        let i2 = (i+1)%7;
-        println!("Point {}: {}, {}, {}", i, ring1[i].x, ring1[i].y, ring1[i].z);
-        println!("Distance to next: {}", ring1[i].distance(&ring1[i2]));
-        println!("Distance to center: {}\n", ring1[i].distance(&center));
+    for i in 0..21 {
+        let j = i+8;
+        let j1 = (i+1)%21+8;
+        points.push(sphere_rand(1.0));
+        if (i%3 == 0) {
+            pairs.push((j, i/3));
+            pairs.push((j, (i/3+1)%7));
+        }
+        else {
+            pairs.push((j, i/3));
+        }
+        pairs.push((j, j1));
     }
+
+
+    for _ in 0..100000 {
+        for (a, b) in &pairs {
+            let (p1, p2) = move_points(&points[*a], &points[*b]);
+            points[*a] = p1;
+            points[*b] = p2;
+        }
+    }
+
+    for (a, b) in &pairs {
+        println!("Distance: {}", points[*a].distance(&points[*b]));
+    }
+
 }
