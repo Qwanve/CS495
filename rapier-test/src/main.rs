@@ -27,19 +27,6 @@ impl Point {
     }
 }
 
-impl From<(f32, f32, f32)> for Point {
-    fn from(t: (f32, f32, f32)) -> Point {
-        let (x, y, z) = t;
-        Point::new(x, y, z)
-    }
-}
-
-impl From<Point> for (f32, f32, f32) {
-    fn from(p: Point) -> (f32, f32, f32) {
-        (p.x, p.y, p.z)
-    }
-}
-
 impl Add for Point {
     type Output = Point;
 
@@ -87,39 +74,13 @@ fn move_points(p1: &Point, p2: &Point) -> ControlFlow<(), (Point, Point)> {
 }
 
 fn main() {
-    /*let center = Point::new(0.0,0.0,0.0);
-
-    let mut ring1: Vec<Point> = Vec::new();
-
-    for _ in 0..7 {
-        ring1.push(sphere_rand(1.0));
-    }
-
-    for _ in 0..100000 {
-        for i in 0..7 {
-            let i2 = (i+1)%7;
-            let distc = ring1[i].distance(&center);
-            let offset = (ring1[i].scale(1.0/distc) - ring1[i]).scale(0.5);
-            ring1[i] = ring1[i] + offset;
-
-            let dist = ring1[i].distance(&ring1[i2]);
-            //println!("{}", dist);
-            if dist != 1.0 {
-                let scalar = ((1.0 - dist)) * 0.1;
-                let offset1 = (ring1[i] - ring1[i2]).scale(scalar) + sphere_rand(scalar * 0.7);
-                let offset2 = (ring1[i2] - ring1[i]).scale(scalar) + sphere_rand(scalar * 0.7);
-                ring1[i] = ring1[i] + offset1;
-                ring1[i2] = ring1[i2] + offset2;
-            }
-        }
-    }*/
-
     let mut points: Vec<Point> = Vec::new();
     let mut pairs: Vec<(usize, usize)> = Vec::new();
     let mut tris: Vec<(usize, usize, usize)> = Vec::new();
 
+    println!("Creating points");
     points.push(Point::new(0.0, 0.0, 0.0));
-
+    //Ring 1
     for i in 1..=7 {
         points.push(sphere_rand(1.0));
         pairs.push((i, i % 7 + 1));
@@ -142,10 +103,10 @@ fn main() {
         tris.push((j, j1, i / 3 + 1));
     }
 
+    println!("Moving points into proper place");
     let start = Instant::now();
-
     while start.elapsed() < MAX_CALCULATION_TIME {
-        let cont = pairs
+        let count = pairs
             .iter()
             .copied()
             .map(|(a, b)| {
@@ -154,7 +115,6 @@ fn main() {
                     points[b] = p2;
                     false
                 } else {
-                    //println!("Stopped at dist: {}", points[a].distance(&points[b]));
                     true
                 }
             })
@@ -163,11 +123,6 @@ fn main() {
             println!("Stopping as the limit is hit");
             break;
         }
-        /* for (a, b) in pairs.iter().copied() {
-            let (p1, p2) = move_points(&points[a], &points[b]);
-            points[a] = p1;
-            points[b] = p2;
-        } */
     }
 
     for (a, b) in pairs.iter().copied() {
