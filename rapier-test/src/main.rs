@@ -1,5 +1,6 @@
 use core::ops::ControlFlow;
 use rand::prelude::*;
+use std::convert::identity;
 use std::ops::{Add, Sub};
 use std::time::{Duration, Instant};
 
@@ -119,8 +120,8 @@ fn main() {
                 }
             })
             .collect::<Vec<bool>>();
-        if cont.into_iter().all(|p| p) {
-            println!("Stopping as the limit is hit");
+        if count.into_iter().all(identity) {
+            println!("Stopping as we are within error margins");
             break;
         }
     }
