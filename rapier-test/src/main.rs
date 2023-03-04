@@ -7,6 +7,8 @@ use std::io::Write;
 use std::ops::{Add, Sub};
 use std::time::{Duration, Instant};
 
+use indicatif::{ProgressBar, ProgressStyle};
+
 const ERROR_MARGIN: f32 = 10e-12;
 const MAX_CALCULATION_TIME: Duration = Duration::from_secs(15);
 
@@ -115,6 +117,10 @@ fn main() {
 
     println!("Moving points into proper place");
     let start = Instant::now();
+    let pb = ProgressBar::new(MAX_CALCULATION_TIME.as_millis() as u64);
+    pb.set_style(
+        ProgressStyle::with_template("{percent}%  {wide_bar}  [{elapsed_precise}]").unwrap(),
+    );
     while start.elapsed() < MAX_CALCULATION_TIME {
         let count = pairs
             .iter()
@@ -133,7 +139,9 @@ fn main() {
             println!("Stopping as we are within error margins");
             break;
         }
+        pb.set_position(start.elapsed().as_millis() as u64);
     }
+    pb.finish();
 
     for (a, b) in pairs.iter().copied() {
         println!("Distance: {a}, {b} = {}", points[a].distance(&points[b]));
