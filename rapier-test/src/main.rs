@@ -1,6 +1,9 @@
 use core::ops::ControlFlow;
 use rand::prelude::*;
 use std::convert::identity;
+use std::fmt::Display;
+use std::fs::File;
+use std::io::Write;
 use std::ops::{Add, Sub};
 use std::time::{Duration, Instant};
 
@@ -41,6 +44,12 @@ impl Sub for Point {
 
     fn sub(self, other: Point) -> Point {
         Point::new(self.x - other.x, self.y - other.y, self.z - other.z)
+    }
+}
+
+impl Display for Point {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{},{},{}", self.x, self.y, self.z)
     }
 }
 
@@ -138,4 +147,12 @@ fn main() {
         println!("Triangle: {a}, {b}, {c}");
         println!("Dists: {dist1}, {dist2}, {dist3}");
     }
+    let mut output_file = File::create("./output.csv").unwrap();
+    for (a, b, c) in tris.iter().copied() {
+        let point1 = points[a].to_string();
+        let point2 = points[b].to_string();
+        let point3 = points[c].to_string();
+        writeln!(output_file, "{point1:<40},{point2:<40},{point3:<40}").unwrap();
+    }
+    println!("Successfully created output.csv");
 }
