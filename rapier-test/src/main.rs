@@ -102,10 +102,7 @@ struct Mesh {
 
 impl Mesh {
     pub fn new(rings: usize) -> Mesh {
-        if rings <= 0 {
-            //TODO should probably replace with better error logic
-            panic!("Mesh must have at least one ring.");
-        }
+        assert!(rings > 0, "Mesh must have at least one ring.");
 
         // Generate number of points per ring
         let mut fib = vec![0, 1];
@@ -133,7 +130,7 @@ impl Mesh {
         }
 
         // generate every ring from 2 to n
-        for ring in 2..rings+1 {
+        for ring in 2..=rings {
             let offset: usize = ring_counts[..ring].iter().sum();
             let prev_offset: usize = ring_counts[..ring-1].iter().sum();
             let mut cur_previous: usize = offset - 1;
@@ -164,20 +161,19 @@ impl Mesh {
     }
 
     pub fn do_iteration(&mut self) -> ControlFlow<(), ()> {
-        let count = self.pairs
-        .iter()
-        .copied()
-        .map(|(a, b)| {
-            if let ControlFlow::Continue((p1, p2)) = move_points(&self.points[a], &self.points[b]) {
-                self.points[a] = p1;
-                self.points[b] = p2;
-                false
-            } else {
-                true
-            }
-        })
-        .collect::<Vec<bool>>();
-        if count.into_iter().all(identity) {
+        if self.pairs
+            .iter()
+            .copied()
+            .map(|(a, b)| {
+                if let ControlFlow::Continue((p1, p2)) = move_points(&self.points[a], &self.points[b]) {
+                    self.points[a] = p1;
+                    self.points[b] = p2;
+                    false
+                } else {
+                    true
+                }
+            }).all(identity)
+        {
             ControlFlow::Break(())
         }
         else {
@@ -187,9 +183,9 @@ impl Mesh {
 
     pub fn get_tris(&self) -> Vec<(Point, Point, Point)> {
         self.tris.iter().copied().map(|(a, b, c)| (
-                self.points[a].clone(),
-                self.points[b].clone(),
-                self.points[c].clone()
+                self.points[a],
+                self.points[b],
+                self.points[c]
         )).collect()
     }
 
@@ -270,7 +266,7 @@ fn main() {
 
     let mut output_file = File::create("./output.csv").unwrap();
     let tris = mesh.get_tris();
-    for (a, b, c) in tris.iter().copied() {
+    for (a, b, c) in tris {
         let point1 = a.get_string();
         let point2 = b.get_string();
         let point3 = c.get_string();
