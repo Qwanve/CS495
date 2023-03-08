@@ -6,6 +6,7 @@ use std::fs::File;
 use std::io::Write;
 use std::ops::{Add, Sub};
 use std::time::{Duration, Instant};
+use std::num::NonZeroUsize;
 
 use duration_string::DurationString;
 
@@ -23,11 +24,11 @@ lazy_static! {
 struct Args {
     /// Number of rings
     #[arg()]
-    rings: usize,
+    rings: NonZeroUsize,
 
     /// Error margin for distance calculations
     #[arg(short, default_value_t = 10e-6)]
-    error_margin: f32,
+    error_margin: f64,
 
     /// Time to run before exiting: [0-9]+(ns|us|ms|[smhdwy])
     #[arg(short, default_value = "15s")]
@@ -46,27 +47,23 @@ impl Args {
 
 #[derive(Copy, Clone)]
 struct Point {
-    x: f32,
-    y: f32,
-    z: f32,
+    x: f64,
+    y: f64,
+    z: f64,
     is_cusp: bool, // Only used for ring generation
 }
 
 impl Point {
-    pub const fn new(x: f32, y: f32, z: f32) -> Point {
+    pub const fn new(x: f64, y: f64, z: f64) -> Point {
         Point { x, y, z, is_cusp:false }
     }
 
-    pub fn distance(&self, p: &Point) -> f32 {
+    pub fn distance(&self, p: &Point) -> f64 {
         ((self.x - p.x).powi(2) + (self.y - p.y).powi(2) + (self.z - p.z).powi(2)).sqrt()
     }
 
-    pub fn scale(&self, scalar: f32) -> Point {
+    pub fn scale(&self, scalar: f64) -> Point {
         Point::new(self.x * scalar, self.y * scalar, self.z * scalar)
-    }
-
-    pub fn get_string(&self) -> String {
-        format!("{}, {}, {}", self.x, self.y, self.z)
     }
 }
 
@@ -101,12 +98,12 @@ struct Mesh {
 }
 
 impl Mesh {
-    pub fn new(rings: usize) -> Mesh {
-        assert!(rings > 0, "Mesh must have at least one ring.");
+    pub fn new(rings: NonZeroUsize) -> Mesh {
+        //assert!(rings > 0, "Mesh must have at least one ring.");
 
         // Generate number of points per ring
         let mut fib = vec![0, 1];
-        for i in 2..((rings+1)*2) {
+        for i in 2..((usize::from(rings)+1)*2) {
             fib.push(fib[i-1] + fib[i-2]);
         }
         let mut ring_counts: Vec<usize> = fib.iter().step_by(2).map(|x| x*7).collect();
@@ -130,7 +127,7 @@ impl Mesh {
         }
 
         // generate every ring from 2 to n
-        for ring in 2..=rings {
+        for ring in 2..=rings.into() {
             let offset: usize = ring_counts[..ring].iter().sum();
             let prev_offset: usize = ring_counts[..ring-1].iter().sum();
             let mut cur_previous: usize = offset - 1;
@@ -205,30 +202,32 @@ impl Mesh {
     }
 }
 
-fn sphere_rand(radius: f32) -> Point {
+fn sphere_rand(radius: f64) -> Point {
     let mut rng = thread_rng();
 
     // Generate two random numbers between 0 and 1
-    let u = rng.gen::<f32>();
-    let v = rng.gen::<f32>();
+    let u = rng.gen::<f64>();
+    let v = rng.gen::<f64>();
 
     // Calculate the longitude and latitude
-    let lon = 2.0 * std::f32::consts::PI * u;
-    let lat = f32::acos(2.0_f32.mul_add(v, -1.0)) - std::f32::consts::FRAC_PI_2;
+    let lon = 2.0 * std::f64::consts::PI * u;
+    let lat = f64::acos(2.0_f64.mul_add(v, -1.0)) - std::f64::consts::FRAC_PI_2;
 
     // Calculate the x, y, and z coordinates of the point
-    let x = f32::cos(lon) * f32::cos(lat) * radius;
-    let y = f32::sin(lon) * f32::cos(lat) * radius;
-    let z = f32::sin(lat) * radius;
+    let x = f64::cos(lon) * f64::cos(lat) * radius;
+    let y = f64::sin(lon) * f64::cos(lat) * radius;
+    let z = f64::sin(lat) * radius;
     Point::new(x, y, z)
 }
 
 fn move_points(p1: &Point, p2: &Point) -> ControlFlow<(), (Point, Point)> {
     let dist = p1.distance(p2);
     if (dist - 1.0).abs() > ARGS.error_margin {
+		println!("{dist}");
         let scalar = (1.0 - dist) * 0.1;
-        let offset1 = (*p1 - *p2).scale(scalar) + sphere_rand(scalar * 0.7);
-        let offset2 = (*p2 - *p1).scale(scalar) + sphere_rand(scalar * 0.7);
+        let offset1 = (*p1 - *p2).scale(scalar);// + sphere_rand(scalar * 0.7);
+        let offset2 = (*p2 - *p1).scale(scalar);// + sphere_rand(scalar * 0.7);
+		assert!((1.0 - dist).abs() > (1.0 - (*p1 +offset1).distance(&(*p2+offset2))).abs());
         ControlFlow::Continue((*p1 + offset1, *p2 + offset2))
     } else {
         ControlFlow::Break(())
@@ -249,15 +248,15 @@ fn main() {
     );
     while start.elapsed() < ARGS.time() {
         if let ControlFlow::Break(_) = mesh.do_iteration() {
-            pb.finish();
-            println!("Stopping as we are within error margins");
+            //pb.finish();
+            pb.println("Stopping as we are within error margins");
             break;
         }
         pb.set_position(start.elapsed().as_millis() as u64);
     }
-    if !pb.is_finished() {
+    //if !pb.is_finished() {
         pb.finish();
-    }
+    //}
     
 
     if ARGS.debug {
@@ -267,9 +266,9 @@ fn main() {
     let mut output_file = File::create("./output.csv").unwrap();
     let tris = mesh.get_tris();
     for (a, b, c) in tris {
-        let point1 = a.get_string();
-        let point2 = b.get_string();
-        let point3 = c.get_string();
+        let point1 = a.to_string();
+        let point2 = b.to_string();
+        let point3 = c.to_string();
         writeln!(output_file, "{point1:<40},{point2:<40},{point3:<40}").unwrap();
     }
     println!("Successfully created output.csv");
