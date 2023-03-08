@@ -9,7 +9,7 @@ use std::time::{Duration, Instant};
 
 use indicatif::{ProgressBar, ProgressStyle};
 
-const ERROR_MARGIN: f32 = 10e-12;
+const ERROR_MARGIN: f32 = 10e-5;
 const MAX_CALCULATION_TIME: Duration = Duration::from_secs(15);
 
 #[derive(Copy, Clone)]
@@ -17,19 +17,24 @@ struct Point {
     x: f32,
     y: f32,
     z: f32,
+    is_cusp: bool, // Only used for ring generation
 }
 
 impl Point {
-    const fn new(x: f32, y: f32, z: f32) -> Point {
-        Point { x, y, z }
+    pub const fn new(x: f32, y: f32, z: f32) -> Point {
+        Point { x, y, z, is_cusp:false }
     }
 
-    fn distance(&self, p: &Point) -> f32 {
+    pub fn distance(&self, p: &Point) -> f32 {
         ((self.x - p.x).powi(2) + (self.y - p.y).powi(2) + (self.z - p.z).powi(2)).sqrt()
     }
 
-    fn scale(&self, scalar: f32) -> Point {
+    pub fn scale(&self, scalar: f32) -> Point {
         Point::new(self.x * scalar, self.y * scalar, self.z * scalar)
+    }
+
+    pub fn get_string(&self) -> String {
+        format!("{}, {}, {}", self.x, self.y, self.z)
     }
 }
 
@@ -52,6 +57,123 @@ impl Sub for Point {
 impl Display for Point {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "{},{},{}", self.x, self.y, self.z)
+    }
+}
+
+struct Mesh {
+    points: Vec<Point>,
+    pairs: Vec<(usize, usize)>,
+    tris: Vec<(usize, usize, usize)>,
+    #[allow(dead_code)]
+    ring_counts: Vec<usize>,
+}
+
+impl Mesh {
+    pub fn new(rings: usize) -> Mesh {
+        if rings <= 0 {
+            //TODO should probably replace with better error logic
+            panic!("Mesh must have at least one ring.");
+        }
+
+        // Generate number of points per ring
+        let mut fib = vec![0, 1];
+        for i in 2..((rings+1)*2) {
+            fib.push(fib[i-1] + fib[i-2]);
+        }
+        let mut ring_counts: Vec<usize> = fib.iter().step_by(2).map(|x| x*7).collect();
+        ring_counts[0] = 1;
+
+        // Create random points
+        let mut points: Vec<Point> = Vec::new();
+        points.push(Point::new(0.0, 0.0, 0.0));
+        for _ in 1..ring_counts.iter().sum() {
+            points.push(sphere_rand(1.0));
+        }
+
+        let mut pairs: Vec<(usize, usize)> = Vec::new();
+        let mut tris: Vec<(usize, usize, usize)> = Vec::new();
+
+        // Manually prepare first ring to help the generation algorithm
+        for i in 1..=7 {
+            pairs.push((i, i % 7 + 1));
+            pairs.push((0, i));
+            tris.push((0, i, i % 7 + 1));
+        }
+
+        // generate every ring from 2 to n
+        for ring in 2..rings+1 {
+            let offset: usize = ring_counts[..ring].iter().sum();
+            let prev_offset: usize = ring_counts[..ring-1].iter().sum();
+            let mut cur_previous: usize = offset - 1;
+            let mut to_next_cusp: usize = 0;
+            for i in 0..ring_counts[ring] {
+                let index = i + offset;
+                if to_next_cusp == 0 {
+                    points[index].is_cusp = true;
+                    pairs.push((index, cur_previous));
+
+                    let temp = (cur_previous - prev_offset + 1) % ring_counts[ring-1] + prev_offset;
+                    pairs.push((index, temp));
+                    tris.push((index, cur_previous, temp));
+                    cur_previous = temp;
+                    to_next_cusp = if points[cur_previous].is_cusp {1} else {2}
+                }
+                else {
+                    pairs.push((index, cur_previous));
+                    to_next_cusp -= 1;
+                }
+                let next_index = (index - offset + 1) % ring_counts[ring] + offset;
+                pairs.push((index, next_index)); // ring lines
+                tris.push((index, next_index, cur_previous));
+            }
+        }
+
+        Mesh {points, pairs, tris, ring_counts}
+    }
+
+    pub fn do_iteration(&mut self) -> ControlFlow<(), ()> {
+        let count = self.pairs
+        .iter()
+        .copied()
+        .map(|(a, b)| {
+            if let ControlFlow::Continue((p1, p2)) = move_points(&self.points[a], &self.points[b]) {
+                self.points[a] = p1;
+                self.points[b] = p2;
+                false
+            } else {
+                true
+            }
+        })
+        .collect::<Vec<bool>>();
+        if count.into_iter().all(identity) {
+            ControlFlow::Break(())
+        }
+        else {
+            ControlFlow::Continue(())
+        }
+    }
+
+    pub fn get_tris(&self) -> Vec<(Point, Point, Point)> {
+        self.tris.iter().copied().map(|(a, b, c)| (
+                self.points[a].clone(),
+                self.points[b].clone(),
+                self.points[c].clone()
+        )).collect()
+    }
+
+    fn print_debug(&self) {
+        for (a, b) in self.pairs.iter().copied() {
+            println!("Distance: {a}, {b} = {}", self.points[a].distance(&self.points[b]));
+        }
+    
+        for (a, b, c) in self.tris.iter().copied() {
+            let dist1 = self.points[a].distance(&self.points[b]);
+            let dist2 = self.points[b].distance(&self.points[c]);
+            let dist3 = self.points[c].distance(&self.points[a]);
+    
+            println!("Triangle: {a}, {b}, {c}");
+            println!("Dists: {dist1}, {dist2}, {dist3}");
+        }
     }
 }
 
@@ -86,35 +208,9 @@ fn move_points(p1: &Point, p2: &Point) -> ControlFlow<(), (Point, Point)> {
 }
 
 fn main() {
-    let mut points: Vec<Point> = Vec::new();
-    let mut pairs: Vec<(usize, usize)> = Vec::new();
-    let mut tris: Vec<(usize, usize, usize)> = Vec::new();
-
     println!("Creating points");
-    points.push(Point::new(0.0, 0.0, 0.0));
-    //Ring 1
-    for i in 1..=7 {
-        points.push(sphere_rand(1.0));
-        pairs.push((i, i % 7 + 1));
-        pairs.push((0, i));
-        tris.push((0, i, i % 7 + 1));
-    }
-
-    for i in 0..21 {
-        let j = i + 8;
-        let j1 = (i + 1) % 21 + 8;
-        points.push(sphere_rand(1.0));
-        if i % 3 == 0 {
-            pairs.push((j, (i / 3 + 6) % 7 + 1));
-            pairs.push((j, (i / 3) % 7 + 1));
-            tris.push((j, (i / 3 + 6) % 7 + 1, (i / 3) % 7 + 1));
-        } else {
-            pairs.push((j, i / 3 + 1));
-        }
-        pairs.push((j, j1));
-        tris.push((j, j1, i / 3 + 1));
-    }
-
+    let mut mesh = Mesh::new(4);
+    
     println!("Moving points into proper place");
     let start = Instant::now();
     let pb = ProgressBar::new(MAX_CALCULATION_TIME.as_millis() as u64);
@@ -122,20 +218,7 @@ fn main() {
         ProgressStyle::with_template("{percent}%  {wide_bar}  [{elapsed_precise}]").unwrap(),
     );
     while start.elapsed() < MAX_CALCULATION_TIME {
-        let count = pairs
-            .iter()
-            .copied()
-            .map(|(a, b)| {
-                if let ControlFlow::Continue((p1, p2)) = move_points(&points[a], &points[b]) {
-                    points[a] = p1;
-                    points[b] = p2;
-                    false
-                } else {
-                    true
-                }
-            })
-            .collect::<Vec<bool>>();
-        if count.into_iter().all(identity) {
+        if let ControlFlow::Break(_) = mesh.do_iteration() {
             println!("Stopping as we are within error margins");
             break;
         }
@@ -143,23 +226,14 @@ fn main() {
     }
     pb.finish();
 
-    for (a, b) in pairs.iter().copied() {
-        println!("Distance: {a}, {b} = {}", points[a].distance(&points[b]));
-    }
+    mesh.print_debug();
 
-    for (a, b, c) in tris.iter().copied() {
-        let dist1 = points[a].distance(&points[b]);
-        let dist2 = points[b].distance(&points[c]);
-        let dist3 = points[c].distance(&points[a]);
-
-        println!("Triangle: {a}, {b}, {c}");
-        println!("Dists: {dist1}, {dist2}, {dist3}");
-    }
     let mut output_file = File::create("./output.csv").unwrap();
+    let tris = mesh.get_tris();
     for (a, b, c) in tris.iter().copied() {
-        let point1 = points[a].to_string();
-        let point2 = points[b].to_string();
-        let point3 = points[c].to_string();
+        let point1 = a.get_string();
+        let point2 = b.get_string();
+        let point3 = c.get_string();
         writeln!(output_file, "{point1:<40},{point2:<40},{point3:<40}").unwrap();
     }
     println!("Successfully created output.csv");
