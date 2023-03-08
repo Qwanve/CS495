@@ -7,10 +7,42 @@ use std::io::Write;
 use std::ops::{Add, Sub};
 use std::time::{Duration, Instant};
 
+use duration_string::DurationString;
+
 use indicatif::{ProgressBar, ProgressStyle};
 
-const ERROR_MARGIN: f32 = 10e-5;
-const MAX_CALCULATION_TIME: Duration = Duration::from_secs(15);
+use clap::Parser;
+
+use lazy_static::lazy_static;
+
+lazy_static! {
+    static ref ARGS: Args = Args::parse();
+}
+
+#[derive(Parser, Debug)]
+struct Args {
+    /// Number of rings
+    #[arg()]
+    rings: usize,
+
+    /// Error margin for distance calculations
+    #[arg(short, default_value_t = 10e-6)]
+    error_margin: f32,
+
+    /// Time to run before exiting: [0-9]+(ns|us|ms|[smhdwy])
+    #[arg(short, default_value = "15s")]
+    time: String,
+
+    /// Enable debug printing
+    #[arg(short, action)]
+    debug: bool,
+}
+
+impl Args {
+    fn time(&self) -> Duration {
+        DurationString::from_string(self.time.clone()).unwrap().into()
+    }
+}
 
 #[derive(Copy, Clone)]
 struct Point {
@@ -197,7 +229,7 @@ fn sphere_rand(radius: f32) -> Point {
 
 fn move_points(p1: &Point, p2: &Point) -> ControlFlow<(), (Point, Point)> {
     let dist = p1.distance(p2);
-    if (dist - 1.0).abs() > ERROR_MARGIN {
+    if (dist - 1.0).abs() > ARGS.error_margin {
         let scalar = (1.0 - dist) * 0.1;
         let offset1 = (*p1 - *p2).scale(scalar) + sphere_rand(scalar * 0.7);
         let offset2 = (*p2 - *p1).scale(scalar) + sphere_rand(scalar * 0.7);
@@ -208,25 +240,33 @@ fn move_points(p1: &Point, p2: &Point) -> ControlFlow<(), (Point, Point)> {
 }
 
 fn main() {
+    println!("Creating mesh with {} rings", ARGS.rings);
+
     println!("Creating points");
-    let mut mesh = Mesh::new(4);
+    let mut mesh = Mesh::new(ARGS.rings);
     
     println!("Moving points into proper place");
     let start = Instant::now();
-    let pb = ProgressBar::new(MAX_CALCULATION_TIME.as_millis() as u64);
+    let pb = ProgressBar::new(ARGS.time().as_millis() as u64);
     pb.set_style(
         ProgressStyle::with_template("{percent}%  {wide_bar}  [{elapsed_precise}]").unwrap(),
     );
-    while start.elapsed() < MAX_CALCULATION_TIME {
+    while start.elapsed() < ARGS.time() {
         if let ControlFlow::Break(_) = mesh.do_iteration() {
+            pb.finish();
             println!("Stopping as we are within error margins");
             break;
         }
         pb.set_position(start.elapsed().as_millis() as u64);
     }
-    pb.finish();
+    if !pb.is_finished() {
+        pb.finish();
+    }
+    
 
-    mesh.print_debug();
+    if ARGS.debug {
+        mesh.print_debug();
+    }
 
     let mut output_file = File::create("./output.csv").unwrap();
     let tris = mesh.get_tris();
