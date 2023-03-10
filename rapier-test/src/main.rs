@@ -241,11 +241,9 @@ fn sphere_rand(radius: f64) -> Point {
 fn move_points(p1: &Point, p2: &Point) -> ControlFlow<(), (Point, Point)> {
     let dist = p1.distance(p2);
     if (dist - 1.0).abs() > ARGS.error_margin {
-        println!("{dist}");
         let scalar = (1.0 - dist) * 0.1;
         let offset1 = (*p1 - *p2).scale(scalar); // + sphere_rand(scalar * 0.7);
         let offset2 = (*p2 - *p1).scale(scalar); // + sphere_rand(scalar * 0.7);
-        assert!((1.0 - dist).abs() > (1.0 - (*p1 + offset1).distance(&(*p2 + offset2))).abs());
         ControlFlow::Continue((*p1 + offset1, *p2 + offset2))
     } else {
         ControlFlow::Break(())
