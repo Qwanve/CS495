@@ -2,8 +2,7 @@ use core::ops::ControlFlow;
 use rand::prelude::*;
 use std::convert::identity;
 use std::fmt::Display;
-use std::fs::File;
-use std::io::Write;
+use std::fs::OpenOptions;
 use std::num::NonZeroUsize;
 use std::ops::{Add, Sub};
 use std::time::{Duration, Instant};
@@ -15,6 +14,9 @@ use indicatif::{ProgressBar, ProgressStyle};
 use clap::Parser;
 
 use lazy_static::lazy_static;
+
+mod stl;
+use stl::to_stl_triangle;
 
 lazy_static! {
     static ref ARGS: Args = Args::parse();
@@ -54,6 +56,7 @@ struct Point {
     z: f64,
     is_cusp: bool, // Only used for ring generation
 }
+
 
 impl Point {
     pub const fn new(x: f64, y: f64, z: f64) -> Point {
@@ -106,7 +109,6 @@ struct Mesh {
 
 impl Mesh {
     pub fn new(rings: NonZeroUsize) -> Mesh {
-        //assert!(rings > 0, "Mesh must have at least one ring.");
 
         // Generate number of points per ring
         let mut fib = vec![0, 1];
@@ -242,8 +244,8 @@ fn move_points(p1: &Point, p2: &Point) -> ControlFlow<(), (Point, Point)> {
     let dist = p1.distance(p2);
     if (dist - 1.0).abs() > ARGS.error_margin {
         let scalar = (1.0 - dist) * 0.1;
-        let offset1 = (*p1 - *p2).scale(scalar); // + sphere_rand(scalar * 0.7);
-        let offset2 = (*p2 - *p1).scale(scalar); // + sphere_rand(scalar * 0.7);
+        let offset1 = (*p1 - *p2).scale(scalar) + sphere_rand(scalar * 0.7);
+        let offset2 = (*p2 - *p1).scale(scalar) + sphere_rand(scalar * 0.7);
         ControlFlow::Continue((*p1 + offset1, *p2 + offset2))
     } else {
         ControlFlow::Break(())
@@ -264,20 +266,18 @@ fn main() {
     );
     while start.elapsed() < ARGS.time() {
         if let ControlFlow::Break(_) = mesh.do_iteration() {
-            //pb.finish();
             pb.println("Stopping as we are within error margins");
             break;
         }
         pb.set_position(start.elapsed().as_millis() as u64);
     }
-    //if !pb.is_finished() {
     pb.finish();
-    //}
 
     if ARGS.debug {
         mesh.print_debug();
     }
 
+    /*
     let mut output_file = File::create("./output.csv").unwrap();
     let tris = mesh.get_tris();
     for (a, b, c) in tris {
@@ -287,4 +287,8 @@ fn main() {
         writeln!(output_file, "{point1:<40},{point2:<40},{point3:<40}").unwrap();
     }
     println!("Successfully created output.csv");
+    */
+    let mesh = mesh.get_tris().into_iter().map(to_stl_triangle);
+    let mut output_file = OpenOptions::new().write(true).create(true).open("mesh.stl").unwrap();
+    stl_io::write_stl(&mut output_file, mesh).unwrap();
 }
