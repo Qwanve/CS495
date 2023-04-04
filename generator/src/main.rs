@@ -19,13 +19,16 @@ use lazy_static::lazy_static;
 
 use meshx::TriMesh;
 
+// Parse the arguments and store them in a global variable
+//  They never change, so a global is safe to use
 lazy_static! {
     static ref ARGS: Args = Args::parse();
 }
 
+// Define what arguments the user can input.
 #[derive(Parser, Debug)]
 struct Args {
-    /// Number of rings
+    /// Number of rings. Must be greater than 0
     #[arg()]
     rings: NonZeroUsize,
 
@@ -33,9 +36,10 @@ struct Args {
     #[arg(short, default_value_t = 10e-6)]
     error_margin: f64,
 
-    /// Time to run before exiting: [0-9]+(ns|us|ms|[smhdwy])
+    // TODO: Better error reporting
+    /// Time to run before exiting: [0-9]+(ns|us|ms|[smhdwy]). eg: 5m, 15s, 100m
     #[arg(short, default_value = "15s")]
-    time: String,
+    time: DurationString,
 
     /// Enable debug printing
     #[arg(short, action)]
@@ -43,22 +47,25 @@ struct Args {
 }
 
 impl Args {
+    /// Convert the user given time string to a duration
     fn time(&self) -> Duration {
-        DurationString::from_string(self.time.clone())
-            .unwrap()
-            .into()
+        self.time.into()
     }
 }
 
+// TODO: Change this to a vector class eg Vector3D
+/// A Point type
 #[derive(Copy, Clone)]
 struct Point {
     x: f64,
     y: f64,
     z: f64,
-    is_cusp: bool, // Only used for ring generation
+    // Used for ring generation.
+    is_cusp: bool,
 }
 
 impl Point {
+    /// Create a new point. By default, points aren't cusps
     pub const fn new(x: f64, y: f64, z: f64) -> Point {
         Point {
             x,
@@ -68,15 +75,24 @@ impl Point {
         }
     }
 
+    /// The distance between points
+    /// # Example
+    /// ```
+    /// let point1 = Point::new(0.0, 1.0, 1.0);
+    /// let point2 = Point::new(0.0, 0.0, 0.0);
+    /// assert_eq!(point1.distance(&point2), 2.0.sqrt());
+    ///```
     pub fn distance(&self, p: &Point) -> f64 {
         ((self.x - p.x).powi(2) + (self.y - p.y).powi(2) + (self.z - p.z).powi(2)).sqrt()
     }
 
+    /// Scale a point as if it's a vector
     pub fn scale(&self, scalar: f64) -> Point {
         Point::new(self.x * scalar, self.y * scalar, self.z * scalar)
     }
 }
 
+// This allows adding two points together as if they're vectors
 impl Add for Point {
     type Output = Point;
 
@@ -85,6 +101,7 @@ impl Add for Point {
     }
 }
 
+// This allows subtracting two points as if they're vectors
 impl Sub for Point {
     type Output = Point;
 
@@ -93,23 +110,29 @@ impl Sub for Point {
     }
 }
 
+// Allows printing a point
 impl Display for Point {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "{},{},{}", self.x, self.y, self.z)
     }
 }
 
+/// The base struct
+/// This contains all the points, and keeps track of which points form lines
+/// and triangles. Points are shared between triangles, so if you move one point,
+/// the point in all triangles that share that point move as well
 struct Mesh {
     points: Vec<Point>,
     pairs: Vec<(usize, usize)>,
     tris: Vec<(usize, usize, usize)>,
-    #[allow(dead_code)]
     ring_counts: Vec<usize>,
 }
 
 impl Mesh {
+    /// Creates a new mesh with the proper amount of points
     pub fn new(rings: NonZeroUsize) -> Mesh {
         // Generate number of points per ring
+        // Formula found https://oeis.org/A001354
         let mut fib = vec![0, 1];
         for i in 2..((usize::from(rings) + 1) * 2) {
             fib.push(fib[i - 1] + fib[i - 2]);
@@ -170,6 +193,10 @@ impl Mesh {
         }
     }
 
+    /// Does one iteration. For every point, it they are further apart
+    ///  than 1, we move them closer together. If they are closer together
+    ///  we push them further apart. If after checking every distance,
+    ///  we move no points, then we return `ControlFlow::Break(())`.
     pub fn do_iteration(&mut self) -> ControlFlow<(), ()> {
         if self
             .pairs
@@ -195,6 +222,7 @@ impl Mesh {
         }
     }
 
+    /// Converts the mesh into a vector of points of the triangles
     pub fn get_tris(&self) -> Vec<(Point, Point, Point)> {
         self.tris
             .iter()
@@ -241,42 +269,55 @@ fn sphere_rand(radius: f64) -> Point {
 }
 
 fn move_points(p1: &Point, p2: &Point) -> ControlFlow<(), (Point, Point)> {
+    // Caculate the distance between the two points
     let dist = p1.distance(p2);
+    // If the distance is close enough to the error margin
     if (dist - 1.0).abs() > ARGS.error_margin {
-        let scalar = (1.0 - dist) * 0.1;
-        let offset1 = (*p1 - *p2).scale(scalar) + sphere_rand(scalar * 0.7);
-        let offset2 = (*p2 - *p1).scale(scalar) + sphere_rand(scalar * 0.7);
-        ControlFlow::Continue((*p1 + offset1, *p2 + offset2))
-    } else {
-        ControlFlow::Break(())
+        return ControlFlow::Break(());
     }
+    // Else, we move them by 1/10th the distance with a touch of randomness
+    let scalar = (1.0 - dist) * 0.1;
+    let offset1 = (*p1 - *p2).scale(scalar) + sphere_rand(scalar * 0.7);
+    let offset2 = (*p2 - *p1).scale(scalar) + sphere_rand(scalar * 0.7);
+    ControlFlow::Continue((*p1 + offset1, *p2 + offset2))
 }
 
 fn main() {
     println!("Creating mesh with {} rings", ARGS.rings);
 
     println!("Creating points");
+    // Create the new mesh with the user given ring count
     let mut mesh = Mesh::new(ARGS.rings);
 
     println!("Moving points into proper place");
+    // Start a timer to have time bounded ending
     let start = Instant::now();
+
+    // Create a progress bar for the user
     let pb = ProgressBar::new(ARGS.time().as_millis() as u64);
     pb.set_style(
         ProgressStyle::with_template("{percent}%  {wide_bar}  [{elapsed_precise}]").unwrap(),
     );
+
+    // While the timer hasn't surpassed the user given time-limit
     while start.elapsed() < ARGS.time() {
+        // We move the points
         if let ControlFlow::Break(_) = mesh.do_iteration() {
+            // If we didn't move any, we are within error margins and we can exit
             pb.println("Stopping as we are within error margins");
             break;
         }
+        // Otherwise, update the progress bar, and continue
         pb.set_position(start.elapsed().as_millis() as u64);
     }
     pb.finish();
 
+    // Debug print the mesh with every distance and point
     if ARGS.debug {
         mesh.print_debug();
     }
 
+    // This was for outputting to csv, which we may come back to
     /*
     let mut output_file = File::create("./output.csv").unwrap();
     let tris = mesh.get_tris();
@@ -289,18 +330,24 @@ fn main() {
     println!("Successfully created output.csv");
     */
 
+    // Convert the Vec<Point> into Vec<[f64; 3]>
     let verts = mesh
         .points
         .iter()
         .copied()
         .map(|p| [p.x, p.y, p.z])
         .collect::<Vec<_>>();
+
+    // Convert the Vec<(usize, usize, usize)> into Vec<[usize; 3]>
     let indices = mesh
         .tris
         .iter()
         .copied()
         .map(|(x, y, z)| [x, y, z])
         .collect::<Vec<_>>();
+
+    // Create a mesh object
     let tri_mesh = TriMesh::new(verts, indices);
+    // And save that object into an .obj file
     save_trimesh_ascii(&tri_mesh, "./output.obj").unwrap();
 }
