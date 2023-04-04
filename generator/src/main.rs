@@ -1,4 +1,5 @@
 use core::ops::ControlFlow;
+use meshx::io::save_trimesh_ascii;
 use rand::prelude::*;
 use std::convert::identity;
 use std::fmt::Display;
@@ -15,6 +16,8 @@ use indicatif::{ProgressBar, ProgressStyle};
 use clap::Parser;
 
 use lazy_static::lazy_static;
+
+use meshx::TriMesh;
 
 lazy_static! {
     static ref ARGS: Args = Args::parse();
@@ -274,6 +277,7 @@ fn main() {
         mesh.print_debug();
     }
 
+    /*
     let mut output_file = File::create("./output.csv").unwrap();
     let tris = mesh.get_tris();
     for (a, b, c) in tris {
@@ -283,4 +287,20 @@ fn main() {
         writeln!(output_file, "{point1:<40},{point2:<40},{point3:<40}").unwrap();
     }
     println!("Successfully created output.csv");
+    */
+
+    let verts = mesh
+        .points
+        .iter()
+        .copied()
+        .map(|p| [p.x, p.y, p.z])
+        .collect::<Vec<_>>();
+    let indices = mesh
+        .tris
+        .iter()
+        .copied()
+        .map(|(x, y, z)| [x, y, z])
+        .collect::<Vec<_>>();
+    let tri_mesh = TriMesh::new(verts, indices);
+    save_trimesh_ascii(&tri_mesh, "./output.obj").unwrap();
 }
