@@ -185,7 +185,8 @@ impl Mesh {
                     true
                 }
             })
-            .all(identity)
+            //Bitwise-and to certainly prevent short-circuit behavior
+            .fold(true, |acc, elem| acc & elem)
         {
             ControlFlow::Break(())
         } else {
