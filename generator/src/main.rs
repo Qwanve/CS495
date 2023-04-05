@@ -216,8 +216,8 @@ impl Mesh {
         println!("Creating duals");
         let mut duals: Vec<(usize, usize)> = Vec::new();
         for x in 0..points.len() {
-            for y in 0..points.len() {
-                if x != y && !pairs.contains(&(x, y)) && ! pairs.contains(&(y, x)) && !duals.contains(&(x, y)) && ! duals.contains(&(y, x)){
+            for y in x..points.len() {
+                if x != y && !pairs.contains(&(x, y)) && ! pairs.contains(&(y, x)) {
                     duals.push((x, y));
                 }
             }
@@ -237,7 +237,7 @@ impl Mesh {
     ///  we push them further apart. If after checking every distance,
     ///  we move no points, then we return `ControlFlow::Break(())`.
     pub fn do_iteration(&mut self) -> ControlFlow<(), ()> {
-        // allign duals
+        // Align duals
         let duals_passed = self.duals
             .iter()
             .copied()
@@ -255,7 +255,7 @@ impl Mesh {
             //Bitwise-and to certainly prevent short-circuit behavior
             .fold(true, |acc, elem| acc & elem);
 
-        // allign points of triangles
+        // Align points of triangles
         let points_passed =  self
             .pairs
             .iter()
@@ -357,11 +357,11 @@ fn move_points(p1: &Vec3, p2: &Vec3) -> ControlFlow<(), (Vec3, Vec3)> {
 fn move_duals(p1: &Vec3, p2: &Vec3) -> ControlFlow<(), (Vec3, Vec3)> {
     // Caculate the distance between the two points
     let dist = p1.distance(p2);
-    let min_dist = 0.6; // TOTO Add as argument
+    let min_dist = 1.0; // TOTO Add as argument
     if dist > min_dist {
         return ControlFlow::Break(());
     }
-    let scalar = (min_dist - dist) * 0.7;
+    let scalar = (min_dist - dist) * 0.6;
     let offset1 = (*p1 - *p2).scale(scalar) + sphere_rand(scalar * 0.7);
     let offset2 = (*p2 - *p1).scale(scalar) + sphere_rand(scalar * 0.7);
     ControlFlow::Continue((*p1 + offset1, *p2 + offset2))
@@ -415,21 +415,6 @@ fn collision_partial(tri1: [Vec3; 3], tri2: [Vec3; 3]) -> bool {
 
 fn collision(tri1: [Vec3; 3], tri2: [Vec3; 3]) -> bool {
     collision_partial(tri1, tri2) || collision_partial(tri2, tri1)
-}
-
-fn _main() {
-    println!("Testing triangle collisions");
-
-    let t1a = Vec3::new(0.0, 0.0, 0.0);
-    let t1b = Vec3::new(1.0, 0.0, 0.0);
-    let t1c = Vec3::new(0.0, 1.0, 0.0);
-
-    let t2a = Vec3::new(0.5, 0.5, 1.0);
-    let t2b = Vec3::new(0.5, 0.5, 0.1);
-    let t2c = Vec3::new(1.0, 1.0, 0.0);
-
-    let c = collision([t1a, t1b, t1c], [t2a, t2b, t2c]);
-    println!("Colliding: {c}");
 }
 
 fn main() {
