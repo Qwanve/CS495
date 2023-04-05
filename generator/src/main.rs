@@ -1,4 +1,6 @@
 use core::ops::ControlFlow;
+use std::collections::HashSet;
+use std::f64::EPSILON;
 use meshx::io::save_trimesh_ascii;
 use rand::prelude::*;
 use std::convert::identity;
@@ -8,6 +10,8 @@ use std::io::Write;
 use std::num::NonZeroUsize;
 use std::ops::{Add, Sub};
 use std::time::{Duration, Instant};
+
+use itertools::Itertools;
 
 use duration_string::DurationString;
 
@@ -54,7 +58,7 @@ impl Args {
 }
 
 /// A Vector type
-#[derive(Copy, Clone)]
+#[derive(Copy, Clone, Debug)]
 struct Vec3 {
     x: f64,
     y: f64,
@@ -133,6 +137,7 @@ impl Display for Vec3 {
 struct Mesh {
     points: Vec<Vec3>,
     pairs: Vec<(usize, usize)>,
+    duals: Vec<(usize, usize)>,
     tris: Vec<(usize, usize, usize)>,
     ring_counts: Vec<usize>,
 }
@@ -153,14 +158,6 @@ impl Mesh {
         ring_counts[0] = 1;
 
         // Create random points
-        let mut points_old: Vec<Vec3> = Vec::new();
-        points_old.push(Vec3::new(0.0, 0.0, 0.0));
-        for _ in 1..ring_counts.iter().sum() {
-            points_old.push(sphere_rand(1.0));
-        }
-        println!("Length of points_old: {}", points_old.len());
-
-        
         let mut points: Vec<Vec3> = Vec::new();
         points.push(Vec3::new(0.0, 0.0, 0.0));
         for (ring, ring_count) in ring_counts[1..].iter().copied().enumerate() {
@@ -173,19 +170,19 @@ impl Mesh {
                 points.push(Vec3::new(x, y, z));
             }
         }
-        println!("Length of points: {}", points.len());
 
         let mut pairs: Vec<(usize, usize)> = Vec::new();
         let mut tris: Vec<(usize, usize, usize)> = Vec::new();
 
         // Manually prepare first ring to help the generation algorithm
         for i in 1..=7 {
-            pairs.push((i, i % 7 + 1));
-            pairs.push((0, i));
+            pairs.push((i, i % 7 + 1)); // ring
+            pairs.push((0, i)); // spoke
             tris.push((0, i, i % 7 + 1));
         }
 
         // generate every ring from 2 to n
+        println!("Creating rings");
         for ring in 2..=rings.into() {
             let offset: usize = ring_counts[..ring].iter().sum();
             let prev_offset: usize = ring_counts[..ring - 1].iter().sum();
@@ -195,27 +192,41 @@ impl Mesh {
                 let index = i + offset;
                 if to_next_cusp == 0 {
                     points[index].is_cusp = true;
-                    pairs.push((index, cur_previous));
+                    pairs.push((index, cur_previous)); // spoke
 
                     let temp =
                         (cur_previous - prev_offset + 1) % ring_counts[ring - 1] + prev_offset;
-                    pairs.push((index, temp));
+                    pairs.push((index, temp)); // spoke
                     tris.push((index, cur_previous, temp));
                     cur_previous = temp;
                     to_next_cusp = if points[cur_previous].is_cusp { 1 } else { 2 }
                 } else {
-                    pairs.push((index, cur_previous));
+                    pairs.push((index, cur_previous)); // spoke
                     to_next_cusp -= 1;
                 }
                 let next_index = (index - offset + 1) % ring_counts[ring] + offset;
-                pairs.push((index, next_index)); // ring lines
+                let prev_index = (index - offset + ring_counts[ring] - 1) % ring_counts[ring] + offset;
+                pairs.push((index, next_index)); // ring
                 tris.push((index, next_index, cur_previous));
+            }
+        }
+
+        // Pull duals from existing pairs
+        // TODO make this not O(n^3) 
+        println!("Creating duals");
+        let mut duals: Vec<(usize, usize)> = Vec::new();
+        for x in 0..points.len() {
+            for y in 0..points.len() {
+                if x != y && !pairs.contains(&(x, y)) && ! pairs.contains(&(y, x)) && !duals.contains(&(x, y)) && ! duals.contains(&(y, x)){
+                    duals.push((x, y));
+                }
             }
         }
 
         Mesh {
             points,
             pairs,
+            duals,
             tris,
             ring_counts,
         }
@@ -226,7 +237,26 @@ impl Mesh {
     ///  we push them further apart. If after checking every distance,
     ///  we move no points, then we return `ControlFlow::Break(())`.
     pub fn do_iteration(&mut self) -> ControlFlow<(), ()> {
-        if self
+        // allign duals
+        let duals_passed = self.duals
+            .iter()
+            .copied()
+            .map(|(a, b)| {
+                if let ControlFlow::Continue((p1, p2)) =
+                    move_duals(&self.points[a], &self.points[b])
+                {
+                    self.points[a] = p1;
+                    self.points[b] = p2;
+                    false
+                } else {
+                    true
+                }
+            })
+            //Bitwise-and to certainly prevent short-circuit behavior
+            .fold(true, |acc, elem| acc & elem);
+
+        // allign points of triangles
+        let points_passed =  self
             .pairs
             .iter()
             .copied()
@@ -242,21 +272,35 @@ impl Mesh {
                 }
             })
             //Bitwise-and to certainly prevent short-circuit behavior
-            .fold(true, |acc, elem| acc & elem)
-        {
+            .fold(true, |acc, elem| acc & elem);
+        if points_passed && duals_passed {
             ControlFlow::Break(())
         } else {
             ControlFlow::Continue(())
         }
     }
 
+    pub fn test_collisions(&self) -> bool {
+        for (t1a, t1b, t1c) in self.tris.iter().copied() {
+            for (t2a, t2b, t2c) in self.tris.iter().copied() {
+                let tri1 = [t1a, t1b, t1c];
+                let tri2 = [t2a, t2b, t2c];
+                if tri2.iter().map(|x| tri1.contains(x)).map(|x| if x {1} else {0}).sum::<i32>() > 1 {
+                    // Don't need to test triangles that share an edge
+                    continue;
+                }
+                if collision(self.get_tri(tri1), self.get_tri(tri2)) {
+                    // return true on collision
+                    return true;
+                }
+            }
+        }
+        false
+    }
+
     /// Converts the mesh into a vector of points of the triangles
-    pub fn get_tris(&self) -> Vec<(Vec3, Vec3, Vec3)> {
-        self.tris
-            .iter()
-            .copied()
-            .map(|(a, b, c)| (self.points[a], self.points[b], self.points[c]))
-            .collect()
+    pub fn get_tri(&self, indicies: [usize; 3]) -> [Vec3; 3] {
+        [self.points[indicies[0]], self.points[indicies[1]], self.points[indicies[2]]]
     }
 
     fn print_debug(&self) {
@@ -310,6 +354,84 @@ fn move_points(p1: &Vec3, p2: &Vec3) -> ControlFlow<(), (Vec3, Vec3)> {
     ControlFlow::Continue((*p1 + offset1, *p2 + offset2))
 }
 
+fn move_duals(p1: &Vec3, p2: &Vec3) -> ControlFlow<(), (Vec3, Vec3)> {
+    // Caculate the distance between the two points
+    let dist = p1.distance(p2);
+    let min_dist = 0.6; // TOTO Add as argument
+    if dist > min_dist {
+        return ControlFlow::Break(());
+    }
+    let scalar = (min_dist - dist) * 0.7;
+    let offset1 = (*p1 - *p2).scale(scalar) + sphere_rand(scalar * 0.7);
+    let offset2 = (*p2 - *p1).scale(scalar) + sphere_rand(scalar * 0.7);
+    ControlFlow::Continue((*p1 + offset1, *p2 + offset2))
+}
+
+fn ray_triangle(ray_origin: &Vec3, ray_vector: &Vec3, vertex0: &Vec3, vertex1: &Vec3, vertex2: &Vec3) -> bool {
+    let edge1 = *vertex1 - *vertex0;
+    let edge2 = *vertex2 - *vertex1;
+    let h = ray_vector.cross(&edge2);
+    let a = edge1.dot(&h);
+    if (a > -EPSILON && a < EPSILON) {
+        // The ray is parallel
+        return false;
+    }
+    let f = 1.0 / a;
+    let s = *ray_origin - *vertex0;
+    let u = f * s.dot(&h);
+    if (u < 0.0 || u > 1.0) {
+        return false;
+    }
+    let q = s.cross(&edge1);
+    let v = f * ray_vector.dot(&q);
+    if (v < 0.0 || u + v > 1.0) {
+        return false;
+    }
+    let t = f * edge2.dot(&q);
+    if (t > EPSILON) // ray intersection
+    {
+        return true;
+    }
+    return false;
+}
+
+fn collision_partial(tri1: [Vec3; 3], tri2: [Vec3; 3]) -> bool {
+    let vertex0 = tri1[0];
+    let vertex1 = tri1[1];
+    let vertex2 = tri1[2];
+    
+    let origin0 = tri2[0];
+    let origin1 = tri2[1];
+    let origin2 = tri2[2];
+    if (
+        ray_triangle(&origin0, &(origin1-origin0), &vertex0, &vertex1, &vertex2) && ray_triangle(&origin1, &(origin0-origin1), &vertex0, &vertex1, &vertex2) ||
+        ray_triangle(&origin0, &(origin2-origin0), &vertex0, &vertex1, &vertex2) && ray_triangle(&origin2, &(origin0-origin2), &vertex0, &vertex1, &vertex2) ||
+        ray_triangle(&origin1, &(origin2-origin1), &vertex0, &vertex1, &vertex2) && ray_triangle(&origin2, &(origin1-origin2), &vertex0, &vertex1, &vertex2)
+    ) {
+        return true;
+    }
+    return false;
+}
+
+fn collision(tri1: [Vec3; 3], tri2: [Vec3; 3]) -> bool {
+    collision_partial(tri1, tri2) || collision_partial(tri2, tri1)
+}
+
+fn _main() {
+    println!("Testing triangle collisions");
+
+    let t1a = Vec3::new(0.0, 0.0, 0.0);
+    let t1b = Vec3::new(1.0, 0.0, 0.0);
+    let t1c = Vec3::new(0.0, 1.0, 0.0);
+
+    let t2a = Vec3::new(0.5, 0.5, 1.0);
+    let t2b = Vec3::new(0.5, 0.5, 0.1);
+    let t2c = Vec3::new(1.0, 1.0, 0.0);
+
+    let c = collision([t1a, t1b, t1c], [t2a, t2b, t2c]);
+    println!("Colliding: {c}");
+}
+
 fn main() {
     println!("Creating mesh with {} rings", ARGS.rings);
 
@@ -335,6 +457,10 @@ fn main() {
             pb.println("Stopping as we are within error margins");
             break;
         }
+        /*if mesh.test_collisions() {
+            pb.println("Stopping due to collision");
+            break;
+        }*/
         // Otherwise, update the progress bar, and continue
         pb.set_position(start.elapsed().as_millis() as u64);
     }
