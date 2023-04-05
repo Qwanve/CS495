@@ -140,6 +140,9 @@ struct Mesh {
 impl Mesh {
     /// Creates a new mesh with the proper amount of points
     pub fn new(rings: NonZeroUsize) -> Mesh {
+        // Initialize random for later
+        let mut rng = thread_rng();
+
         // Generate number of points per ring
         // Formula found https://oeis.org/A001354
         let mut fib = vec![0, 1];
@@ -150,11 +153,27 @@ impl Mesh {
         ring_counts[0] = 1;
 
         // Create random points
+        let mut points_old: Vec<Vec3> = Vec::new();
+        points_old.push(Vec3::new(0.0, 0.0, 0.0));
+        for _ in 1..ring_counts.iter().sum() {
+            points_old.push(sphere_rand(1.0));
+        }
+        println!("Length of points_old: {}", points_old.len());
+
+        
         let mut points: Vec<Vec3> = Vec::new();
         points.push(Vec3::new(0.0, 0.0, 0.0));
-        for _ in 1..ring_counts.iter().sum() {
-            points.push(sphere_rand(1.0));
+        for (ring, ring_count) in ring_counts[1..].iter().copied().enumerate() {
+            for i in 0..ring_count {
+                let angle = (i as f64) / (ring_count as f64) * std::f64::consts::TAU;
+                let s = (ring as f64) + 1.0;
+                let x = s * angle.cos();
+                let y = s * angle.sin();
+                let z = rng.gen_range(-0.1..0.1);
+                points.push(Vec3::new(x, y, z));
+            }
         }
+        println!("Length of points: {}", points.len());
 
         let mut pairs: Vec<(usize, usize)> = Vec::new();
         let mut tris: Vec<(usize, usize, usize)> = Vec::new();
@@ -281,7 +300,7 @@ fn move_points(p1: &Vec3, p2: &Vec3) -> ControlFlow<(), (Vec3, Vec3)> {
     // Caculate the distance between the two points
     let dist = p1.distance(p2);
     // If the distance is close enough to the error margin
-    if (dist - 1.0).abs() > ARGS.error_margin {
+    if (dist - 1.0).abs() < ARGS.error_margin {
         return ControlFlow::Break(());
     }
     // Else, we move them by 1/10th the distance with a touch of randomness
