@@ -5,6 +5,9 @@ use std::f64::EPSILON;
 use std::fmt::Display;
 use std::num::NonZeroUsize;
 use std::ops::{Add, Sub};
+use std::sync::atomic::AtomicBool;
+use std::sync::Arc;
+use std::sync::RwLock;
 use std::time::{Duration, Instant};
 
 use duration_string::DurationString;
@@ -437,7 +440,20 @@ fn main() {
 
     println!("Creating points");
     // Create the new mesh with the user given ring count
-    let mut mesh = Mesh::new(ARGS.rings);
+    let mesh = Arc::new(RwLock::new(Mesh::new(ARGS.rings)));
+
+    let stop = Arc::new(AtomicBool::new(false));
+
+    let stop_signal = stop.clone();
+    let signal_mesh = mesh.clone();
+    let ctrlc_err = ctrlc::set_handler(move || {
+        println!("Recieved interrupt. Exiting early");
+        save_mesh(&signal_mesh.read().unwrap());
+        stop_signal.store(true, std::sync::atomic::Ordering::Relaxed);
+    });
+    if ctrlc_err.is_err() {
+        println!("Failed to set ctrl-c hook");
+    }
 
     println!("Moving points into proper place");
     // Start a timer to have time bounded ending
@@ -450,9 +466,9 @@ fn main() {
     );
 
     // While the timer hasn't surpassed the user given time-limit
-    while start.elapsed() < ARGS.time() {
+    while start.elapsed() < ARGS.time() && !stop.load(std::sync::atomic::Ordering::Relaxed) {
         // We move the points
-        if let ControlFlow::Break(_) = mesh.do_iteration() {
+        if let ControlFlow::Break(_) = mesh.write().unwrap().do_iteration() {
             // If we didn't move any, we are within error margins and we can exit
             pb.println("Stopping as we are within error margins");
             break;
@@ -468,7 +484,11 @@ fn main() {
 
     // Debug print the mesh with every distance and point
     if ARGS.debug {
-        mesh.print_debug();
+        mesh.read().unwrap().print_debug();
+    }
+
+    if mesh.read().unwrap().test_collisions() {
+        println!("Mesh is self-intersecting");
     }
 
     // This was for outputting to csv, which we may come back to
@@ -484,6 +504,10 @@ fn main() {
     println!("Successfully created output.csv");
     */
 
+    save_mesh(&mesh.read().unwrap());
+}
+
+fn save_mesh(mesh: &Mesh) {
     // Convert the Vec<Point> into Vec<[f64; 3]>
     let verts = mesh
         .points
