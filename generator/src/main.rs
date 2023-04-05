@@ -53,10 +53,9 @@ impl Args {
     }
 }
 
-// TODO: Change this to a vector class eg Vector3D
-/// A Point type
+/// A Vector type
 #[derive(Copy, Clone)]
-struct Point {
+struct Vec3 {
     x: f64,
     y: f64,
     z: f64,
@@ -64,10 +63,10 @@ struct Point {
     is_cusp: bool,
 }
 
-impl Point {
-    /// Create a new point. By default, points aren't cusps
-    pub const fn new(x: f64, y: f64, z: f64) -> Point {
-        Point {
+impl Vec3 {
+    /// Create a new vector. By default, vectors aren't cusps
+    pub const fn new(x: f64, y: f64, z: f64) -> Vec3 {
+        Vec3 {
             x,
             y,
             z,
@@ -75,43 +74,53 @@ impl Point {
         }
     }
 
-    /// The distance between points
+    /// The distance between vectors as if they were points
     /// # Example
     /// ```
     /// let point1 = Point::new(0.0, 1.0, 1.0);
     /// let point2 = Point::new(0.0, 0.0, 0.0);
     /// assert_eq!(point1.distance(&point2), 2.0.sqrt());
     ///```
-    pub fn distance(&self, p: &Point) -> f64 {
+    pub fn distance(&self, p: &Vec3) -> f64 {
         ((self.x - p.x).powi(2) + (self.y - p.y).powi(2) + (self.z - p.z).powi(2)).sqrt()
     }
 
-    /// Scale a point as if it's a vector
-    pub fn scale(&self, scalar: f64) -> Point {
-        Point::new(self.x * scalar, self.y * scalar, self.z * scalar)
+    /// Scale a vector
+    pub fn scale(&self, scalar: f64) -> Vec3 {
+        Vec3::new(self.x * scalar, self.y * scalar, self.z * scalar)
+    }
+
+    /// Caclulate the cross product of two vectors
+    pub fn cross(&self, other: &Vec3) -> Vec3 {
+        Vec3::new(self.y*other.z - self.z*other.y, self.z*other.x - self.x*other.z, self.x*other.y - self.y*other.x)
+    }
+
+    /// Caclulate the dot product of two vectors
+    pub fn dot(&self, other: &Vec3) -> f64 {
+        self.x*other.x + self.y*other.y + self.z*other.z
     }
 }
 
-// This allows adding two points together as if they're vectors
-impl Add for Point {
-    type Output = Point;
+// This allows adding two vectors together
+impl Add for Vec3 {
+    type Output = Vec3;
 
-    fn add(self, other: Point) -> Point {
-        Point::new(self.x + other.x, self.y + other.y, self.z + other.z)
+    fn add(self, other: Vec3) -> Vec3 {
+        Vec3::new(self.x + other.x, self.y + other.y, self.z + other.z)
     }
 }
 
-// This allows subtracting two points as if they're vectors
-impl Sub for Point {
-    type Output = Point;
+// This allows subtracting two vectors
+impl Sub for Vec3 {
+    type Output = Vec3;
 
-    fn sub(self, other: Point) -> Point {
-        Point::new(self.x - other.x, self.y - other.y, self.z - other.z)
+    fn sub(self, other: Vec3) -> Vec3 {
+        Vec3::new(self.x - other.x, self.y - other.y, self.z - other.z)
     }
 }
 
-// Allows printing a point
-impl Display for Point {
+// Allows printing a vector
+impl Display for Vec3 {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "{},{},{}", self.x, self.y, self.z)
     }
@@ -122,7 +131,7 @@ impl Display for Point {
 /// and triangles. Points are shared between triangles, so if you move one point,
 /// the point in all triangles that share that point move as well
 struct Mesh {
-    points: Vec<Point>,
+    points: Vec<Vec3>,
     pairs: Vec<(usize, usize)>,
     tris: Vec<(usize, usize, usize)>,
     ring_counts: Vec<usize>,
@@ -141,8 +150,8 @@ impl Mesh {
         ring_counts[0] = 1;
 
         // Create random points
-        let mut points: Vec<Point> = Vec::new();
-        points.push(Point::new(0.0, 0.0, 0.0));
+        let mut points: Vec<Vec3> = Vec::new();
+        points.push(Vec3::new(0.0, 0.0, 0.0));
         for _ in 1..ring_counts.iter().sum() {
             points.push(sphere_rand(1.0));
         }
@@ -223,7 +232,7 @@ impl Mesh {
     }
 
     /// Converts the mesh into a vector of points of the triangles
-    pub fn get_tris(&self) -> Vec<(Point, Point, Point)> {
+    pub fn get_tris(&self) -> Vec<(Vec3, Vec3, Vec3)> {
         self.tris
             .iter()
             .copied()
@@ -250,7 +259,7 @@ impl Mesh {
     }
 }
 
-fn sphere_rand(radius: f64) -> Point {
+fn sphere_rand(radius: f64) -> Vec3 {
     let mut rng = thread_rng();
 
     // Generate two random numbers between 0 and 1
@@ -265,10 +274,10 @@ fn sphere_rand(radius: f64) -> Point {
     let x = f64::cos(lon) * f64::cos(lat) * radius;
     let y = f64::sin(lon) * f64::cos(lat) * radius;
     let z = f64::sin(lat) * radius;
-    Point::new(x, y, z)
+    Vec3::new(x, y, z)
 }
 
-fn move_points(p1: &Point, p2: &Point) -> ControlFlow<(), (Point, Point)> {
+fn move_points(p1: &Vec3, p2: &Vec3) -> ControlFlow<(), (Vec3, Vec3)> {
     // Caculate the distance between the two points
     let dist = p1.distance(p2);
     // If the distance is close enough to the error margin
