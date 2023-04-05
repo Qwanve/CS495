@@ -1,17 +1,11 @@
 use core::ops::ControlFlow;
-use std::collections::HashSet;
-use std::f64::EPSILON;
 use meshx::io::save_trimesh_ascii;
 use rand::prelude::*;
-use std::convert::identity;
+use std::f64::EPSILON;
 use std::fmt::Display;
-use std::fs::File;
-use std::io::Write;
 use std::num::NonZeroUsize;
 use std::ops::{Add, Sub};
 use std::time::{Duration, Instant};
-
-use itertools::Itertools;
 
 use duration_string::DurationString;
 
@@ -96,12 +90,16 @@ impl Vec3 {
 
     /// Caclulate the cross product of two vectors
     pub fn cross(&self, other: &Vec3) -> Vec3 {
-        Vec3::new(self.y*other.z - self.z*other.y, self.z*other.x - self.x*other.z, self.x*other.y - self.y*other.x)
+        Vec3::new(
+            self.y * other.z - self.z * other.y,
+            self.z * other.x - self.x * other.z,
+            self.x * other.y - self.y * other.x,
+        )
     }
 
     /// Caclulate the dot product of two vectors
     pub fn dot(&self, other: &Vec3) -> f64 {
-        self.x*other.x + self.y*other.y + self.z*other.z
+        self.x * other.x + self.y * other.y + self.z * other.z
     }
 }
 
@@ -205,19 +203,20 @@ impl Mesh {
                     to_next_cusp -= 1;
                 }
                 let next_index = (index - offset + 1) % ring_counts[ring] + offset;
-                let prev_index = (index - offset + ring_counts[ring] - 1) % ring_counts[ring] + offset;
+                let prev_index =
+                    (index - offset + ring_counts[ring] - 1) % ring_counts[ring] + offset;
                 pairs.push((index, next_index)); // ring
                 tris.push((index, next_index, cur_previous));
             }
         }
 
         // Pull duals from existing pairs
-        // TODO make this not O(n^3) 
+        // TODO make this not O(n^3)
         println!("Creating duals");
         let mut duals: Vec<(usize, usize)> = Vec::new();
         for x in 0..points.len() {
             for y in x..points.len() {
-                if x != y && !pairs.contains(&(x, y)) && ! pairs.contains(&(y, x)) {
+                if x != y && !pairs.contains(&(x, y)) && !pairs.contains(&(y, x)) {
                     duals.push((x, y));
                 }
             }
@@ -238,7 +237,8 @@ impl Mesh {
     ///  we move no points, then we return `ControlFlow::Break(())`.
     pub fn do_iteration(&mut self) -> ControlFlow<(), ()> {
         // Align duals
-        let duals_passed = self.duals
+        let duals_passed = self
+            .duals
             .iter()
             .copied()
             .map(|(a, b)| {
@@ -256,7 +256,7 @@ impl Mesh {
             .fold(true, |acc, elem| acc & elem);
 
         // Align points of triangles
-        let points_passed =  self
+        let points_passed = self
             .pairs
             .iter()
             .copied()
@@ -285,7 +285,13 @@ impl Mesh {
             for (t2a, t2b, t2c) in self.tris.iter().copied() {
                 let tri1 = [t1a, t1b, t1c];
                 let tri2 = [t2a, t2b, t2c];
-                if tri2.iter().map(|x| tri1.contains(x)).map(|x| if x {1} else {0}).sum::<i32>() > 1 {
+                if tri2
+                    .iter()
+                    .map(|x| tri1.contains(x))
+                    .map(|x| if x { 1 } else { 0 })
+                    .sum::<i32>()
+                    > 1
+                {
                     // Don't need to test triangles that share an edge
                     continue;
                 }
@@ -300,7 +306,11 @@ impl Mesh {
 
     /// Converts the mesh into a vector of points of the triangles
     pub fn get_tri(&self, indicies: [usize; 3]) -> [Vec3; 3] {
-        [self.points[indicies[0]], self.points[indicies[1]], self.points[indicies[2]]]
+        [
+            self.points[indicies[0]],
+            self.points[indicies[1]],
+            self.points[indicies[2]],
+        ]
     }
 
     fn print_debug(&self) {
@@ -367,50 +377,55 @@ fn move_duals(p1: &Vec3, p2: &Vec3) -> ControlFlow<(), (Vec3, Vec3)> {
     ControlFlow::Continue((*p1 + offset1, *p2 + offset2))
 }
 
-fn ray_triangle(ray_origin: &Vec3, ray_vector: &Vec3, vertex0: &Vec3, vertex1: &Vec3, vertex2: &Vec3) -> bool {
+fn ray_triangle(
+    ray_origin: &Vec3,
+    ray_vector: &Vec3,
+    vertex0: &Vec3,
+    vertex1: &Vec3,
+    vertex2: &Vec3,
+) -> bool {
     let edge1 = *vertex1 - *vertex0;
     let edge2 = *vertex2 - *vertex1;
     let h = ray_vector.cross(&edge2);
     let a = edge1.dot(&h);
-    if (a > -EPSILON && a < EPSILON) {
+    if a > -EPSILON && a < EPSILON {
         // The ray is parallel
         return false;
     }
     let f = 1.0 / a;
     let s = *ray_origin - *vertex0;
     let u = f * s.dot(&h);
-    if (u < 0.0 || u > 1.0) {
+    if !(0.0..=1.0).contains(&u) {
         return false;
     }
     let q = s.cross(&edge1);
     let v = f * ray_vector.dot(&q);
-    if (v < 0.0 || u + v > 1.0) {
+    if v < 0.0 || u + v > 1.0 {
         return false;
     }
     let t = f * edge2.dot(&q);
-    if (t > EPSILON) // ray intersection
+    if t > EPSILON
+    // ray intersection
     {
         return true;
     }
-    return false;
+    false
 }
 
 fn collision_partial(tri1: [Vec3; 3], tri2: [Vec3; 3]) -> bool {
     let vertex0 = tri1[0];
     let vertex1 = tri1[1];
     let vertex2 = tri1[2];
-    
+
     let origin0 = tri2[0];
     let origin1 = tri2[1];
     let origin2 = tri2[2];
-    if (
-        ray_triangle(&origin0, &(origin1-origin0), &vertex0, &vertex1, &vertex2) && ray_triangle(&origin1, &(origin0-origin1), &vertex0, &vertex1, &vertex2) ||
-        ray_triangle(&origin0, &(origin2-origin0), &vertex0, &vertex1, &vertex2) && ray_triangle(&origin2, &(origin0-origin2), &vertex0, &vertex1, &vertex2) ||
-        ray_triangle(&origin1, &(origin2-origin1), &vertex0, &vertex1, &vertex2) && ray_triangle(&origin2, &(origin1-origin2), &vertex0, &vertex1, &vertex2)
-    ) {
-        return true;
-    }
-    return false;
+    ray_triangle(&origin0, &(origin1 - origin0), &vertex0, &vertex1, &vertex2)
+        && ray_triangle(&origin1, &(origin0 - origin1), &vertex0, &vertex1, &vertex2)
+        || ray_triangle(&origin0, &(origin2 - origin0), &vertex0, &vertex1, &vertex2)
+            && ray_triangle(&origin2, &(origin0 - origin2), &vertex0, &vertex1, &vertex2)
+        || ray_triangle(&origin1, &(origin2 - origin1), &vertex0, &vertex1, &vertex2)
+            && ray_triangle(&origin2, &(origin1 - origin2), &vertex0, &vertex1, &vertex2)
 }
 
 fn collision(tri1: [Vec3; 3], tri2: [Vec3; 3]) -> bool {
