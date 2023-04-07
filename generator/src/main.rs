@@ -1,13 +1,11 @@
 use core::ops::ControlFlow;
 use meshx::io::save_trimesh_ascii;
 use rand::prelude::*;
-use std::f64::EPSILON;
 use std::fmt::Display;
 use std::num::NonZeroUsize;
 use std::ops::{Add, Sub};
 use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
-use std::sync::RwLock;
 use std::time::{Duration, Instant};
 
 use duration_string::DurationString;
@@ -139,9 +137,9 @@ impl Display for Vec3 {
 /// the point in all triangles that share that point move as well
 struct Mesh {
     points: Vec<Vec3>,
-    pairs: Vec<(usize, usize)>,
-    duals: Vec<(usize, usize)>,
-    tris: Vec<(usize, usize, usize)>,
+    pairs: Vec<[usize; 2]>,
+    duals: Vec<[usize; 2]>,
+    tris: Vec<[usize; 3]>,
     ring_counts: Vec<usize>,
 }
 
@@ -166,16 +164,16 @@ impl Mesh {
         for (ring, ring_count) in ring_counts[1..].iter().copied().enumerate() {
             for i in 0..ring_count {
                 let angle = (i as f64) / (ring_count as f64) * std::f64::consts::TAU;
-                let s = (ring as f64) + 1.0;
-                let x = s * angle.cos();
-                let y = s * angle.sin();
+                let distance = (ring as f64) + 1.0;
+                let x = distance * angle.cos();
+                let y = distance * angle.sin();
                 let z = rng.gen_range(-0.1..0.1);
                 points.push(Vec3::new(x, y, z));
             }
         }
 
-        let mut pairs: Vec<(usize, usize)> = Vec::new();
-        let mut tris: Vec<(usize, usize, usize)> = Vec::new();
+        let mut pairs: Vec<[usize; 2]> = Vec::new();
+        let mut tris: Vec<[usize; 3]> = Vec::new();
 
         // Manually prepare first ring to help the generation algorithm
         for i in 1..=7 {
@@ -195,34 +193,36 @@ impl Mesh {
                 let index = i + offset;
                 if to_next_cusp == 0 {
                     points[index].is_cusp = true;
-                    pairs.push((index, cur_previous)); // spoke
+                    pairs.push([index, cur_previous]); // spoke
 
                     let temp =
                         (cur_previous - prev_offset + 1) % ring_counts[ring - 1] + prev_offset;
-                    pairs.push((index, temp)); // spoke
-                    tris.push((index, cur_previous, temp));
+                    pairs.push([index, temp]); // spoke
+                    tris.push([index, cur_previous, temp]);
                     cur_previous = temp;
                     to_next_cusp = if points[cur_previous].is_cusp { 1 } else { 2 }
                 } else {
-                    pairs.push((index, cur_previous)); // spoke
+                    pairs.push([index, cur_previous]); // spoke
                     to_next_cusp -= 1;
                 }
                 let next_index = (index - offset + 1) % ring_counts[ring] + offset;
                 let prev_index =
                     (index - offset + ring_counts[ring] - 1) % ring_counts[ring] + offset;
-                pairs.push((index, next_index)); // ring
-                tris.push((index, next_index, cur_previous));
+                pairs.push([index, next_index]); // ring
+                tris.push([index, next_index, cur_previous]);
             }
         }
 
         // Pull duals from existing pairs
         // TODO make this not O(n^3)
         println!("Creating duals");
+        pairs.iter_mut().for_each(|p| p.sort());
+        pairs.sort();
         let duals = (0..points.len())
             .into_par_iter()
-            .flat_map(|x| ((x + 1)..points.len()).into_par_iter().map(move |y| (x, y)))
-            .filter(|(x, y)| !pairs.contains(&(*x, *y)) && !pairs.contains(&(*y, *x)))
-            .collect::<Vec<(usize, usize)>>();
+            .flat_map(|x| ((x + 1)..points.len()).into_par_iter().map(move |y| [x, y]))
+            .filter(|p| pairs.binary_search(p).is_err())
+            .collect::<Vec<[usize; 2]>>();
 
         Mesh {
             points,
@@ -243,7 +243,7 @@ impl Mesh {
             .duals
             .iter()
             .copied()
-            .map(|(a, b)| {
+            .map(|[a, b]| {
                 if let ControlFlow::Continue((p1, p2)) =
                     move_duals(&self.points[a], &self.points[b])
                 {
@@ -262,7 +262,7 @@ impl Mesh {
             .pairs
             .iter()
             .copied()
-            .map(|(a, b)| {
+            .map(|[a, b]| {
                 if let ControlFlow::Continue((p1, p2)) =
                     move_points(&self.points[a], &self.points[b])
                 {
@@ -283,8 +283,8 @@ impl Mesh {
     }
 
     pub fn test_collisions(&self) -> bool {
-        for (t1a, t1b, t1c) in self.tris.iter().copied() {
-            for (t2a, t2b, t2c) in self.tris.iter().copied() {
+        for [t1a, t1b, t1c] in self.tris.iter().copied() {
+            for [t2a, t2b, t2c] in self.tris.iter().copied() {
                 let tri1 = [t1a, t1b, t1c];
                 let tri2 = [t2a, t2b, t2c];
                 if tri2
@@ -316,14 +316,14 @@ impl Mesh {
     }
 
     fn print_debug(&self) {
-        for (a, b) in self.pairs.iter().copied() {
+        for [a, b] in self.pairs.iter().copied() {
             println!(
                 "Distance: {a}, {b} = {}",
                 self.points[a].distance(&self.points[b])
             );
         }
 
-        for (a, b, c) in self.tris.iter().copied() {
+        for [a, b, c] in self.tris.iter().copied() {
             let dist1 = self.points[a].distance(&self.points[b]);
             let dist2 = self.points[b].distance(&self.points[c]);
             let dist3 = self.points[c].distance(&self.points[a]);
@@ -390,7 +390,7 @@ fn ray_triangle(
     let edge2 = *vertex2 - *vertex1;
     let h = ray_vector.cross(&edge2);
     let a = edge1.dot(&h);
-    if a > -EPSILON && a < EPSILON {
+    if a > -f64::EPSILON && a < f64::EPSILON {
         // The ray is parallel
         return false;
     }
@@ -406,7 +406,7 @@ fn ray_triangle(
         return false;
     }
     let t = f * edge2.dot(&q);
-    if t > EPSILON
+    if t > f64::EPSILON
     // ray intersection
     {
         return true;
@@ -422,12 +422,12 @@ fn collision_partial(tri1: [Vec3; 3], tri2: [Vec3; 3]) -> bool {
     let origin0 = tri2[0];
     let origin1 = tri2[1];
     let origin2 = tri2[2];
-    ray_triangle(&origin0, &(origin1 - origin0), &vertex0, &vertex1, &vertex2)
-        && ray_triangle(&origin1, &(origin0 - origin1), &vertex0, &vertex1, &vertex2)
-        || ray_triangle(&origin0, &(origin2 - origin0), &vertex0, &vertex1, &vertex2)
-            && ray_triangle(&origin2, &(origin0 - origin2), &vertex0, &vertex1, &vertex2)
-        || ray_triangle(&origin1, &(origin2 - origin1), &vertex0, &vertex1, &vertex2)
-            && ray_triangle(&origin2, &(origin1 - origin2), &vertex0, &vertex1, &vertex2)
+    (ray_triangle(&origin0, &(origin1 - origin0), &vertex0, &vertex1, &vertex2)
+        && ray_triangle(&origin1, &(origin0 - origin1), &vertex0, &vertex1, &vertex2))
+        || (ray_triangle(&origin0, &(origin2 - origin0), &vertex0, &vertex1, &vertex2)
+            && ray_triangle(&origin2, &(origin0 - origin2), &vertex0, &vertex1, &vertex2))
+        || (ray_triangle(&origin1, &(origin2 - origin1), &vertex0, &vertex1, &vertex2)
+            && ray_triangle(&origin2, &(origin1 - origin2), &vertex0, &vertex1, &vertex2))
 }
 
 fn collision(tri1: [Vec3; 3], tri2: [Vec3; 3]) -> bool {
@@ -439,15 +439,14 @@ fn main() {
 
     println!("Creating points");
     // Create the new mesh with the user given ring count
-    let mesh = Arc::new(RwLock::new(Mesh::new(ARGS.rings)));
+    let mut mesh = Mesh::new(ARGS.rings);
 
     let stop = Arc::new(AtomicBool::new(false));
 
     let stop_signal = stop.clone();
-    let signal_mesh = mesh.clone();
+    //let signal_mesh = mesh.clone();
     let ctrlc_err = ctrlc::set_handler(move || {
         println!("Recieved interrupt. Exiting early");
-        save_mesh(&signal_mesh.read().unwrap());
         stop_signal.store(true, std::sync::atomic::Ordering::Relaxed);
     });
     if ctrlc_err.is_err() {
@@ -467,7 +466,7 @@ fn main() {
     // While the timer hasn't surpassed the user given time-limit
     while start.elapsed() < ARGS.time() && !stop.load(std::sync::atomic::Ordering::Relaxed) {
         // We move the points
-        if let ControlFlow::Break(_) = mesh.write().unwrap().do_iteration() {
+        if let ControlFlow::Break(_) = mesh.do_iteration() {
             // If we didn't move any, we are within error margins and we can exit
             pb.println("Stopping as we are within error margins");
             break;
@@ -483,10 +482,10 @@ fn main() {
 
     // Debug print the mesh with every distance and point
     if ARGS.debug {
-        mesh.read().unwrap().print_debug();
+        mesh.print_debug();
     }
 
-    if mesh.read().unwrap().test_collisions() {
+    if mesh.test_collisions() {
         println!("Mesh is self-intersecting");
     }
 
@@ -503,7 +502,7 @@ fn main() {
     println!("Successfully created output.csv");
     */
 
-    save_mesh(&mesh.read().unwrap());
+    save_mesh(&mesh);
 }
 
 fn save_mesh(mesh: &Mesh) {
@@ -513,18 +512,10 @@ fn save_mesh(mesh: &Mesh) {
         .iter()
         .copied()
         .map(|p| [p.x, p.y, p.z])
-        .collect::<Vec<_>>();
-
-    // Convert the Vec<(usize, usize, usize)> into Vec<[usize; 3]>
-    let indices = mesh
-        .tris
-        .iter()
-        .copied()
-        .map(|(x, y, z)| [x, y, z])
-        .collect::<Vec<_>>();
+        .collect::<Vec<_>>(); 
 
     // Create a mesh object
-    let tri_mesh = TriMesh::new(verts, indices);
+    let tri_mesh = TriMesh::new(verts, mesh.tris.clone());
     // And save that object into an .obj file
     save_trimesh_ascii(&tri_mesh, "./output.obj").unwrap();
 }
