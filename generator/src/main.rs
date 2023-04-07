@@ -151,11 +151,10 @@ impl Mesh {
 
         // Generate number of points per ring
         // Formula found https://oeis.org/A001354
-        let mut fib = vec![0, 1];
-        for i in 2..((usize::from(rings) + 1) * 2) {
-            fib.push(fib[i - 1] + fib[i - 2]);
+        let mut ring_counts = vec![0, 8];
+        for i in 2..(usize::from(rings) + 1) {
+            ring_counts.push(4*ring_counts[i-1] - ring_counts[i - 2]);
         }
-        let mut ring_counts: Vec<usize> = fib.iter().step_by(2).map(|x| x * 7).collect();
         ring_counts[0] = 1;
 
         // Create random points
@@ -176,10 +175,10 @@ impl Mesh {
         let mut tris: Vec<[usize; 3]> = Vec::new();
 
         // Manually prepare first ring to help the generation algorithm
-        for i in 1..=7 {
-            pairs.push((i, i % 7 + 1)); // ring
-            pairs.push((0, i)); // spoke
-            tris.push((0, i, i % 7 + 1));
+        for i in 1..=8 {
+            pairs.push([i, i % 8 + 1]); // ring
+            pairs.push([0, i]); // spoke
+            tris.push([0, i, i % 8 + 1]);
         }
 
         // generate every ring from 2 to n
@@ -200,7 +199,7 @@ impl Mesh {
                     pairs.push([index, temp]); // spoke
                     tris.push([index, cur_previous, temp]);
                     cur_previous = temp;
-                    to_next_cusp = if points[cur_previous].is_cusp { 1 } else { 2 }
+                    to_next_cusp = if points[cur_previous].is_cusp { 2 } else { 3 }
                 } else {
                     pairs.push([index, cur_previous]); // spoke
                     to_next_cusp -= 1;
