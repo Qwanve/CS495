@@ -20,6 +20,8 @@ use lazy_static::lazy_static;
 
 use meshx::TriMesh;
 
+use rayon::prelude::*;
+
 // Parse the arguments and store them in a global variable
 //  They never change, so a global is safe to use
 lazy_static! {
@@ -216,14 +218,11 @@ impl Mesh {
         // Pull duals from existing pairs
         // TODO make this not O(n^3)
         println!("Creating duals");
-        let mut duals: Vec<(usize, usize)> = Vec::new();
-        for x in 0..points.len() {
-            for y in x..points.len() {
-                if x != y && !pairs.contains(&(x, y)) && !pairs.contains(&(y, x)) {
-                    duals.push((x, y));
-                }
-            }
-        }
+        let duals = (0..points.len())
+            .into_par_iter()
+            .flat_map(|x| ((x + 1)..points.len()).into_par_iter().map(move |y| (x, y)))
+            .filter(|(x, y)| !pairs.contains(&(*x, *y)) && !pairs.contains(&(*y, *x)))
+            .collect::<Vec<(usize, usize)>>();
 
         Mesh {
             points,
