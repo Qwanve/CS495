@@ -45,6 +45,9 @@ struct Args {
     /// Enable debug printing
     #[arg(short, action)]
     debug: bool,
+
+    #[arg(long, action)]
+    animate: bool,
 }
 
 impl Args {
@@ -151,9 +154,9 @@ impl Mesh {
 
         // Generate number of points per ring
         // Formula found https://oeis.org/A001354
-        let mut ring_counts = vec![0, 8];
+        let mut ring_counts = vec![0, 7];
         for i in 2..(usize::from(rings) + 1) {
-            ring_counts.push(4*ring_counts[i-1] - ring_counts[i - 2]);
+            ring_counts.push(3 * ring_counts[i - 1] - ring_counts[i - 2]);
         }
         ring_counts[0] = 1;
 
@@ -175,10 +178,10 @@ impl Mesh {
         let mut tris: Vec<[usize; 3]> = Vec::new();
 
         // Manually prepare first ring to help the generation algorithm
-        for i in 1..=8 {
-            pairs.push([i, i % 8 + 1]); // ring
+        for i in 1..=7 {
+            pairs.push([i, i % 7 + 1]); // ring
             pairs.push([0, i]); // spoke
-            tris.push([0, i, i % 8 + 1]);
+            tris.push([0, i, i % 7 + 1]);
         }
 
         // generate every ring from 2 to n
@@ -199,7 +202,7 @@ impl Mesh {
                     pairs.push([index, temp]); // spoke
                     tris.push([index, cur_previous, temp]);
                     cur_previous = temp;
-                    to_next_cusp = if points[cur_previous].is_cusp { 2 } else { 3 }
+                    to_next_cusp = if points[cur_previous].is_cusp { 1 } else { 2 }
                 } else {
                     pairs.push([index, cur_previous]); // spoke
                     to_next_cusp -= 1;
@@ -462,10 +465,18 @@ fn main() {
         ProgressStyle::with_template("{percent}%  {wide_bar}  [{elapsed_precise}]").unwrap(),
     );
 
+    let mut frame_number = 0;
     // While the timer hasn't surpassed the user given time-limit
     while start.elapsed() < ARGS.time() && !stop.load(std::sync::atomic::Ordering::Relaxed) {
+        if ARGS.animate {
+            save_mesh(&mesh, format!("./output/frame-{frame_number:07}.obj"));
+            frame_number += 1;
+        }
         // We move the points
         if let ControlFlow::Break(_) = mesh.do_iteration() {
+            if ARGS.animate {
+                save_mesh(&mesh, format!("./output/frame-{frame_number:07}.obj"));
+            }
             // If we didn't move any, we are within error margins and we can exit
             pb.println("Stopping as we are within error margins");
             break;
@@ -501,20 +512,20 @@ fn main() {
     println!("Successfully created output.csv");
     */
 
-    save_mesh(&mesh);
+    save_mesh(&mesh, format!("./output.obj"));
 }
 
-fn save_mesh(mesh: &Mesh) {
+fn save_mesh(mesh: &Mesh, filename: String) {
     // Convert the Vec<Point> into Vec<[f64; 3]>
     let verts = mesh
         .points
         .iter()
         .copied()
         .map(|p| [p.x, p.y, p.z])
-        .collect::<Vec<_>>(); 
+        .collect::<Vec<_>>();
 
     // Create a mesh object
     let tri_mesh = TriMesh::new(verts, mesh.tris.clone());
     // And save that object into an .obj file
-    save_trimesh_ascii(&tri_mesh, "./output.obj").unwrap();
+    save_trimesh_ascii(&tri_mesh, filename).unwrap();
 }
