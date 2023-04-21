@@ -285,16 +285,11 @@ impl Mesh {
     }
 
     pub fn test_collisions(&self) -> bool {
-        for [t1a, t1b, t1c] in self.tris.iter().copied() {
-            for [t2a, t2b, t2c] in self.tris.iter().copied() {
-                let tri1 = [t1a, t1b, t1c];
-                let tri2 = [t2a, t2b, t2c];
+        for tri1 in self.tris.iter().copied() {
+            for tri2 in self.tris.iter().copied() {
                 if tri2
                     .iter()
-                    .map(|x| tri1.contains(x))
-                    .map(|x| if x { 1 } else { 0 })
-                    .sum::<i32>()
-                    > 1
+                    .any(|x| tri1.contains(x))
                 {
                     // Don't need to test triangles that share an edge
                     continue;
@@ -527,5 +522,8 @@ fn save_mesh(mesh: &Mesh, filename: String) {
     // Create a mesh object
     let tri_mesh = TriMesh::new(verts, mesh.tris.clone());
     // And save that object into an .obj file
-    save_trimesh_ascii(&tri_mesh, filename).unwrap();
+    match save_trimesh_ascii(&tri_mesh, filename) {
+        Ok(()) => {},
+        Err(x) => panic!("Error: {x}"),
+    }
 }
