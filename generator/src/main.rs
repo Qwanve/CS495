@@ -32,6 +32,10 @@ struct Args {
     /// Number of rings. Must be greater than 0
     #[arg()]
     rings: NonZeroUsize,
+    
+    // The number of triangles per point. Must be 7 or greater
+    #[arg(default_value_t = 7)]
+    triangles_per_point: usize,
 
     /// Error margin for distance calculations
     #[arg(short, default_value_t = 10e-6)]
@@ -143,7 +147,6 @@ struct Mesh {
     pairs: Vec<[usize; 2]>,
     duals: Vec<[usize; 2]>,
     tris: Vec<[usize; 3]>,
-    ring_counts: Vec<usize>,
 }
 
 impl Mesh {
@@ -154,9 +157,9 @@ impl Mesh {
 
         // Generate number of points per ring
         // Formula found https://oeis.org/A001354
-        let mut ring_counts = vec![0, 7];
-        for i in 2..(usize::from(rings) + 1) {
-            ring_counts.push(3 * ring_counts[i - 1] - ring_counts[i - 2]);
+        let mut ring_counts = vec![0, ARGS.triangles_per_point];
+        for i in 2..(usize::from(rings)+1) {
+            ring_counts.push((ARGS.triangles_per_point-4) * ring_counts[i - 1] - ring_counts[i - 2]);
         }
         ring_counts[0] = 1;
 
@@ -178,10 +181,10 @@ impl Mesh {
         let mut tris: Vec<[usize; 3]> = Vec::new();
 
         // Manually prepare first ring to help the generation algorithm
-        for i in 1..=7 {
-            pairs.push([i, i % 7 + 1]); // ring
+        for i in 1..=ARGS.triangles_per_point {
+            pairs.push([i, i % ARGS.triangles_per_point + 1]); // ring
             pairs.push([0, i]); // spoke
-            tris.push([0, i, i % 7 + 1]);
+            tris.push([0, i, i % ARGS.triangles_per_point + 1]);
         }
 
         // generate every ring from 2 to n
@@ -208,8 +211,6 @@ impl Mesh {
                     to_next_cusp -= 1;
                 }
                 let next_index = (index - offset + 1) % ring_counts[ring] + offset;
-                let prev_index =
-                    (index - offset + ring_counts[ring] - 1) % ring_counts[ring] + offset;
                 pairs.push([index, next_index]); // ring
                 tris.push([index, next_index, cur_previous]);
             }
@@ -231,7 +232,6 @@ impl Mesh {
             pairs,
             duals,
             tris,
-            ring_counts,
         }
     }
 
@@ -358,8 +358,8 @@ fn move_points(p1: &Vec3, p2: &Vec3) -> ControlFlow<(), (Vec3, Vec3)> {
     }
     // Else, we move them by 1/10th the distance with a touch of randomness
     let scalar = (1.0 - dist) * 0.1;
-    let offset1 = (*p1 - *p2).scale(scalar) + sphere_rand(scalar * 0.7);
-    let offset2 = (*p2 - *p1).scale(scalar) + sphere_rand(scalar * 0.7);
+    let offset1 = (*p1 - *p2).scale(scalar);// + sphere_rand(scalar * 0.7);
+    let offset2 = (*p2 - *p1).scale(scalar);// + sphere_rand(scalar * 0.7);
     ControlFlow::Continue((*p1 + offset1, *p2 + offset2))
 }
 
@@ -371,8 +371,8 @@ fn move_duals(p1: &Vec3, p2: &Vec3) -> ControlFlow<(), (Vec3, Vec3)> {
         return ControlFlow::Break(());
     }
     let scalar = (min_dist - dist) * 0.6;
-    let offset1 = (*p1 - *p2).scale(scalar) + sphere_rand(scalar * 0.7);
-    let offset2 = (*p2 - *p1).scale(scalar) + sphere_rand(scalar * 0.7);
+    let offset1 = (*p1 - *p2).scale(scalar);// + sphere_rand(scalar * 0.7);
+    let offset2 = (*p2 - *p1).scale(scalar);// + sphere_rand(scalar * 0.7);
     ControlFlow::Continue((*p1 + offset1, *p2 + offset2))
 }
 
@@ -432,7 +432,7 @@ fn collision(tri1: [Vec3; 3], tri2: [Vec3; 3]) -> bool {
 }
 
 fn main() {
-    println!("Creating mesh with {} rings", ARGS.rings);
+    println!("Creating mesh with {} rings and {} triangles per point", ARGS.rings, ARGS.triangles_per_point);
 
     println!("Creating points");
     // Create the new mesh with the user given ring count
@@ -507,7 +507,7 @@ fn main() {
     println!("Successfully created output.csv");
     */
 
-    save_mesh(&mesh, format!("./output.obj"));
+    save_mesh(&mesh, "./output.obj".into());
 }
 
 fn save_mesh(mesh: &Mesh, filename: String) {
