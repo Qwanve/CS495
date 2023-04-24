@@ -161,7 +161,8 @@ impl Mesh {
         for i in 2..(usize::from(rings)+1) {
             ring_counts.push((ARGS.triangles_per_point-4) * ring_counts[i - 1] - ring_counts[i - 2]);
         }
-        ring_counts[0] = 1;
+        //ring_counts[0] = 1;
+        ring_counts.iter_mut().filter(|x| **x == 0).for_each(|x| *x = 1);
 
         // Create random points
         let mut points: Vec<Vec3> = Vec::new();
@@ -205,7 +206,7 @@ impl Mesh {
                     pairs.push([index, temp]); // spoke
                     tris.push([index, cur_previous, temp]);
                     cur_previous = temp;
-                    to_next_cusp = if points[cur_previous].is_cusp { 1 } else { 2 }
+                    to_next_cusp = ARGS.triangles_per_point - if points[cur_previous].is_cusp { 6 } else { 5 };
                 } else {
                     pairs.push([index, cur_previous]); // spoke
                     to_next_cusp -= 1;
@@ -435,6 +436,10 @@ fn main() {
     println!("Creating mesh with {} rings and {} triangles per point", ARGS.rings, ARGS.triangles_per_point);
 
     println!("Creating points");
+    if ARGS.animate {
+        std::fs::remove_dir_all("./output/").unwrap();
+        std::fs::create_dir("./output").unwrap();
+    }
     // Create the new mesh with the user given ring count
     let mut mesh = Mesh::new(ARGS.rings);
 
