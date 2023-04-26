@@ -1,4 +1,5 @@
 use core::ops::ControlFlow;
+use std::io::ErrorKind;
 use meshx::io::save_trimesh_ascii;
 use rand::prelude::*;
 use std::num::NonZeroUsize;
@@ -367,7 +368,11 @@ fn main() {
 
     println!("Creating points");
     if ARGS.animate {
-        std::fs::remove_dir_all("./output/").unwrap();
+        match std::fs::remove_dir_all("./output/") {
+            Ok(()) => {},
+            Err(x) if x.kind() == ErrorKind::NotFound => {},
+            Err(x) => panic!("Err: {x}"),
+        }
         std::fs::create_dir("./output").unwrap();
     }
     // Create the new mesh with the user given ring count
