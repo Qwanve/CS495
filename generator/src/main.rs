@@ -1,9 +1,7 @@
 use core::ops::ControlFlow;
 use meshx::io::save_trimesh_ascii;
 use rand::prelude::*;
-use std::fmt::Display;
 use std::num::NonZeroUsize;
-use std::ops::{Add, Sub};
 use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -19,6 +17,9 @@ use lazy_static::lazy_static;
 use meshx::TriMesh;
 
 use rayon::prelude::*;
+
+use nalgebra::geometry::Point3;
+use nalgebra::distance;
 
 // Parse the arguments and store them in a global variable
 //  They never change, so a global is safe to use
@@ -62,81 +63,8 @@ impl Args {
 }
 
 /// A Vector type
-#[derive(Copy, Clone, Debug)]
-struct Vec3 {
-    x: f64,
-    y: f64,
-    z: f64,
-    // Used for ring generation.
-    is_cusp: bool,
-}
+type Vec3 = Point3<f64>;
 
-impl Vec3 {
-    /// Create a new vector. By default, vectors aren't cusps
-    pub const fn new(x: f64, y: f64, z: f64) -> Vec3 {
-        Vec3 {
-            x,
-            y,
-            z,
-            is_cusp: false,
-        }
-    }
-
-    /// The distance between vectors as if they were points
-    /// # Example
-    /// ```
-    /// let point1 = Point::new(0.0, 1.0, 1.0);
-    /// let point2 = Point::new(0.0, 0.0, 0.0);
-    /// assert_eq!(point1.distance(&point2), 2.0.sqrt());
-    ///```
-    pub fn distance(&self, p: &Vec3) -> f64 {
-        ((self.x - p.x).powi(2) + (self.y - p.y).powi(2) + (self.z - p.z).powi(2)).sqrt()
-    }
-
-    /// Scale a vector
-    pub fn scale(&self, scalar: f64) -> Vec3 {
-        Vec3::new(self.x * scalar, self.y * scalar, self.z * scalar)
-    }
-
-    /// Caclulate the cross product of two vectors
-    pub fn cross(&self, other: &Vec3) -> Vec3 {
-        Vec3::new(
-            self.y * other.z - self.z * other.y,
-            self.z * other.x - self.x * other.z,
-            self.x * other.y - self.y * other.x,
-        )
-    }
-
-    /// Caclulate the dot product of two vectors
-    pub fn dot(&self, other: &Vec3) -> f64 {
-        self.x * other.x + self.y * other.y + self.z * other.z
-    }
-}
-
-// This allows adding two vectors together
-impl Add for Vec3 {
-    type Output = Vec3;
-
-    fn add(self, other: Vec3) -> Vec3 {
-        Vec3::new(self.x + other.x, self.y + other.y, self.z + other.z)
-    }
-}
-
-// This allows subtracting two vectors
-impl Sub for Vec3 {
-    type Output = Vec3;
-
-    fn sub(self, other: Vec3) -> Vec3 {
-        Vec3::new(self.x - other.x, self.y - other.y, self.z - other.z)
-    }
-}
-
-// Allows printing a vector
-impl Display for Vec3 {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{},{},{}", self.x, self.y, self.z)
-    }
-}
 
 /// The base struct
 /// This contains all the points, and keeps track of which points form lines
@@ -180,7 +108,9 @@ impl Mesh {
 
         let mut pairs: Vec<[usize; 2]> = Vec::new();
         let mut tris: Vec<[usize; 3]> = Vec::new();
-
+        
+        let mut cusps: Vec<bool> = vec![false; points.len()];
+        
         // Manually prepare first ring to help the generation algorithm
         for i in 1..=ARGS.triangles_per_point {
             pairs.push([i, i % ARGS.triangles_per_point + 1]); // ring
@@ -198,7 +128,7 @@ impl Mesh {
             for i in 0..ring_counts[ring] {
                 let index = i + offset;
                 if to_next_cusp == 0 {
-                    points[index].is_cusp = true;
+                    cusps[index] = true;
                     pairs.push([index, cur_previous]); // spoke
 
                     let temp =
@@ -206,7 +136,7 @@ impl Mesh {
                     pairs.push([index, temp]); // spoke
                     tris.push([index, cur_previous, temp]);
                     cur_previous = temp;
-                    to_next_cusp = ARGS.triangles_per_point - if points[cur_previous].is_cusp { 6 } else { 5 };
+                    to_next_cusp = ARGS.triangles_per_point - if cusps[cur_previous] { 6 } else { 5 };
                 } else {
                     pairs.push([index, cur_previous]); // spoke
                     to_next_cusp -= 1;
@@ -317,14 +247,14 @@ impl Mesh {
         for [a, b] in self.pairs.iter().copied() {
             println!(
                 "Distance: {a}, {b} = {}",
-                self.points[a].distance(&self.points[b])
+                distance(&self.points[a], &self.points[b])
             );
         }
 
         for [a, b, c] in self.tris.iter().copied() {
-            let dist1 = self.points[a].distance(&self.points[b]);
-            let dist2 = self.points[b].distance(&self.points[c]);
-            let dist3 = self.points[c].distance(&self.points[a]);
+            let dist1 = distance(&self.points[a], &self.points[b]);
+            let dist2 = distance(&self.points[b], &self.points[c]);
+            let dist3 = distance(&self.points[c], &self.points[a]);
 
             println!("Triangle: {a}, {b}, {c}");
             println!("Dists: {dist1}, {dist2}, {dist3}");
@@ -352,7 +282,7 @@ fn sphere_rand(radius: f64) -> Vec3 {
 
 fn move_points(p1: &Vec3, p2: &Vec3) -> ControlFlow<(), (Vec3, Vec3)> {
     // Caculate the distance between the two points
-    let dist = p1.distance(p2);
+    let dist = distance(p1,p2);
     // If the distance is close enough to the error margin
     if (dist - 1.0).abs() < ARGS.error_margin {
         return ControlFlow::Break(());
@@ -366,8 +296,8 @@ fn move_points(p1: &Vec3, p2: &Vec3) -> ControlFlow<(), (Vec3, Vec3)> {
 
 fn move_duals(p1: &Vec3, p2: &Vec3) -> ControlFlow<(), (Vec3, Vec3)> {
     // Caculate the distance between the two points
-    let dist = p1.distance(p2);
     let min_dist = 1.0; // TOTO Add as argument
+    let dist = distance(p1,p2);
     if dist > min_dist {
         return ControlFlow::Break(());
     }
@@ -386,7 +316,7 @@ fn ray_triangle(
 ) -> bool {
     let edge1 = *vertex1 - *vertex0;
     let edge2 = *vertex2 - *vertex1;
-    let h = ray_vector.cross(&edge2);
+    let h = ray_vector.coords.cross(&edge2);
     let a = edge1.dot(&h);
     if a > -f64::EPSILON && a < f64::EPSILON {
         // The ray is parallel
@@ -399,7 +329,7 @@ fn ray_triangle(
         return false;
     }
     let q = s.cross(&edge1);
-    let v = f * ray_vector.dot(&q);
+    let v = f * ray_vector.coords.dot(&q);
     if v < 0.0 || u + v > 1.0 {
         return false;
     }
@@ -420,12 +350,12 @@ fn collision_partial(tri1: [Vec3; 3], tri2: [Vec3; 3]) -> bool {
     let origin0 = tri2[0];
     let origin1 = tri2[1];
     let origin2 = tri2[2];
-    (ray_triangle(&origin0, &(origin1 - origin0), &vertex0, &vertex1, &vertex2)
-        && ray_triangle(&origin1, &(origin0 - origin1), &vertex0, &vertex1, &vertex2))
-        || (ray_triangle(&origin0, &(origin2 - origin0), &vertex0, &vertex1, &vertex2)
-            && ray_triangle(&origin2, &(origin0 - origin2), &vertex0, &vertex1, &vertex2))
-        || (ray_triangle(&origin1, &(origin2 - origin1), &vertex0, &vertex1, &vertex2)
-            && ray_triangle(&origin2, &(origin1 - origin2), &vertex0, &vertex1, &vertex2))
+    (ray_triangle(&origin0, &(origin1 - origin0).into(), &vertex0, &vertex1, &vertex2)
+        && ray_triangle(&origin1, &(origin0 - origin1).into(), &vertex0, &vertex1, &vertex2))
+        || (ray_triangle(&origin0, &(origin2 - origin0).into(), &vertex0, &vertex1, &vertex2)
+            && ray_triangle(&origin2, &(origin0 - origin2).into(), &vertex0, &vertex1, &vertex2))
+        || (ray_triangle(&origin1, &(origin2 - origin1).into(), &vertex0, &vertex1, &vertex2)
+            && ray_triangle(&origin2, &(origin1 - origin2).into(), &vertex0, &vertex1, &vertex2))
 }
 
 fn collision(tri1: [Vec3; 3], tri2: [Vec3; 3]) -> bool {
