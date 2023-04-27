@@ -1,7 +1,7 @@
 use core::ops::ControlFlow;
-use std::io::ErrorKind;
 use meshx::io::save_trimesh_ascii;
 use rand::prelude::*;
+use std::io::ErrorKind;
 use std::num::NonZeroUsize;
 use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
@@ -19,8 +19,10 @@ use meshx::TriMesh;
 
 use rayon::prelude::*;
 
-use nalgebra::geometry::Point3;
 use nalgebra::distance;
+use nalgebra::geometry::Point3;
+
+use itertools::Itertools;
 
 // Parse the arguments and store them in a global variable
 //  They never change, so a global is safe to use
@@ -34,7 +36,7 @@ struct Args {
     /// Number of rings. Must be greater than 0
     #[arg()]
     rings: NonZeroUsize,
-    
+
     // The number of triangles per point. Must be 7 or greater
     #[arg(default_value_t = 7)]
     triangles_per_point: usize,
@@ -66,6 +68,82 @@ impl Args {
 /// A Vector type
 type Vec3 = Point3<f64>;
 
+struct CollisionGroups {
+    groups: Vec<Vec<Vec<Vec<usize>>>>,
+    //groups: [[[Vec<usize>]]],
+    offset: usize,
+}
+
+impl CollisionGroups {
+    fn new(rings: usize) -> Self {
+        let size = rings * 2 + 20;
+        let groups: Vec<Vec<Vec<Vec<usize>>>> =
+            vec![vec![vec![Vec::<usize>::new(); size]; size]; size];
+        Self {
+            groups: groups,
+            offset: rings + 10,
+        }
+    }
+
+    fn add_point(&mut self, point: &usize, group: &[f64; 3]) {
+        let [gx, gy, gz] = group;
+        let offset = self.offset as f64;
+        self.groups[(*gx + offset) as usize][(*gy + offset) as usize][(*gz + offset) as usize].push(*point);
+    }
+
+    fn move_point(&mut self, point: &usize, old_group: &Vec3, new_group: &Vec3) {
+        let offset = self.offset as f64;
+        let old_c = *(old_group.coords);
+        let old_g = [(old_c.x + offset) as usize, (old_c.y + offset) as usize, (old_c.z + offset) as usize];
+        let new_c = *(new_group.coords);
+        let new_g = [(new_c.x + offset) as usize, (new_c.y + offset) as usize, (new_c.z + offset) as usize];
+        //println!("{old_c:?} {new_c:?}");
+        if (old_g != new_g) {
+            let [ox, oy, oz] = old_g;
+            let [nx, ny, nz] = new_g;
+            //println!("Moving point {point} from [{ox}, {oy}, {oz}] to [{nx}, {ny}, {nz}]");
+            let oi = match self.groups[ox][oy][oz].iter().position(|x| *x == *point) {
+                Some(x) => x,
+                None => panic!("index {point} not found in {:?}", self.groups[ox][oy][oz]),
+            };
+            self.groups[ox][oy][oz].remove(oi);
+            self.groups[nx][ny][nz].push(*point);
+        }
+    }
+
+    fn get_neighbor_groups(&self, group: &[i32; 3]) -> Vec<[i32; 3]> {
+        let [gx, gy, gz] = group;
+        let nums = [-2, -1, 0, 1, 2];
+        let offset = self.offset as i32;
+        nums.iter()
+            .cartesian_product(nums)
+            .cartesian_product(nums)
+            .map(|((x, y), z)| [*x, y, z])
+            .map(|[x, y, z]| [gx + x, gy + y, gz + z])
+            //.filter(|[x, y, z]| (x.abs() < offset && y.abs() < offset && z.abs() < offset))
+            .collect()
+    }
+
+    fn get_neighbor_points(&self, point: &usize, group: &[i32; 3]) -> Vec<usize> {
+        let offset = self.offset as i32;
+        let v = self.get_neighbor_groups(group)
+            .iter()
+            .map(|[x, y, z]| {
+                [
+                    (x + offset) as usize,
+                    (y + offset) as usize,
+                    (z + offset) as usize,
+                ]
+            })
+            .map(|[x, y, z]| self.groups[x][y][z].clone())
+            .flatten()
+            .unique()
+            .filter(|p| p > point)
+            .collect();
+        //println!("Point {point} neighbors: {v:?}");
+        v
+    }
+}
 
 /// The base struct
 /// This contains all the points, and keeps track of which points form lines
@@ -74,7 +152,8 @@ type Vec3 = Point3<f64>;
 struct Mesh {
     points: Vec<Vec3>,
     pairs: Vec<[usize; 2]>,
-    duals: Vec<[usize; 2]>,
+    //duals: Vec<[usize; 2]>,
+    collision_groups: CollisionGroups,
     tris: Vec<[usize; 3]>,
 }
 
@@ -87,15 +166,23 @@ impl Mesh {
         // Generate number of points per ring
         // Formula found https://oeis.org/A001354
         let mut ring_counts = vec![0, ARGS.triangles_per_point];
-        for i in 2..(usize::from(rings)+1) {
-            ring_counts.push((ARGS.triangles_per_point-4) * ring_counts[i - 1] - ring_counts[i - 2]);
+        for i in 2..(usize::from(rings) + 1) {
+            ring_counts
+                .push((ARGS.triangles_per_point - 4) * ring_counts[i - 1] - ring_counts[i - 2]);
         }
         //ring_counts[0] = 1;
-        ring_counts.iter_mut().filter(|x| **x == 0).for_each(|x| *x = 1);
+        ring_counts
+            .iter_mut()
+            .filter(|x| **x == 0)
+            .for_each(|x| *x = 1);
+
+        // Create collision groups
+        let mut collision_groups = CollisionGroups::new(usize::from(rings));
 
         // Create random points
         let mut points: Vec<Vec3> = Vec::new();
         points.push(Vec3::new(0.0, 0.0, 0.0));
+        collision_groups.add_point(&0, &[0.0, 0.0, 0.0]);
         for (ring, ring_count) in ring_counts[1..].iter().copied().enumerate() {
             for i in 0..ring_count {
                 let angle = (i as f64) / (ring_count as f64) * std::f64::consts::TAU;
@@ -104,14 +191,16 @@ impl Mesh {
                 let y = distance * angle.sin();
                 let z = rng.gen_range(-0.1..0.1);
                 points.push(Vec3::new(x, y, z));
+                collision_groups.add_point(&(points.len() - 1), &[x, y, z]);
             }
         }
+        //println!("Groups: {:?}", collision_groups.groups);
 
         let mut pairs: Vec<[usize; 2]> = Vec::new();
         let mut tris: Vec<[usize; 3]> = Vec::new();
-        
+
         let mut cusps: Vec<bool> = vec![false; points.len()];
-        
+
         // Manually prepare first ring to help the generation algorithm
         for i in 1..=ARGS.triangles_per_point {
             pairs.push([i, i % ARGS.triangles_per_point + 1]); // ring
@@ -137,7 +226,8 @@ impl Mesh {
                     pairs.push([index, temp]); // spoke
                     tris.push([index, cur_previous, temp]);
                     cur_previous = temp;
-                    to_next_cusp = ARGS.triangles_per_point - if cusps[cur_previous] { 6 } else { 5 };
+                    to_next_cusp =
+                        ARGS.triangles_per_point - if cusps[cur_previous] { 6 } else { 5 };
                 } else {
                     pairs.push([index, cur_previous]); // spoke
                     to_next_cusp -= 1;
@@ -150,19 +240,13 @@ impl Mesh {
 
         // Pull duals from existing pairs
         // TODO make this not O(n^3)
-        println!("Creating duals");
         pairs.iter_mut().for_each(|p| p.sort());
         pairs.sort();
-        let duals = (0..points.len())
-            .into_par_iter()
-            .flat_map(|x| ((x + 1)..points.len()).into_par_iter().map(move |y| [x, y]))
-            .filter(|p| pairs.binary_search(p).is_err())
-            .collect::<Vec<[usize; 2]>>();
 
         Mesh {
             points,
             pairs,
-            duals,
+            collision_groups,
             tris,
         }
     }
@@ -173,7 +257,7 @@ impl Mesh {
     ///  we move no points, then we return `ControlFlow::Break(())`.
     pub fn do_iteration(&mut self) -> ControlFlow<(), ()> {
         // Align duals
-        let duals_passed = self
+        /*let duals_passed = self
             .duals
             .iter()
             .copied()
@@ -190,7 +274,38 @@ impl Mesh {
             })
             //Bitwise-and to certainly prevent short-circuit behavior
             .fold(true, |acc, elem| acc & elem);
+        */
 
+        // Align within collision groups
+        let coll_passed = (0..self.points.len())
+            .map(|a| {
+                let c = *self.points[a];
+                let group = [c.x as i32, c.y as i32, c.z as i32];
+                self.collision_groups
+                    .get_neighbor_points(
+                        &a,
+                        &group,
+                    )
+                    .iter()
+                    .copied()
+                    //.filter(|b| !self.pairs.contains(&[a, *b]))
+                    .map(|b| {
+                        if let ControlFlow::Continue((p1, p2)) =
+                            move_duals(&self.points[a], &self.points[b])
+                        {
+                            //println!("Pair ({a}, {b})");
+                            self.collision_groups.move_point(&a, &self.points[a], &p1);
+                            self.collision_groups.move_point(&b, &self.points[b], &p2);
+                            self.points[a] = p1;
+                            self.points[b] = p2;
+                            false
+                        } else {
+                            true
+                        }
+                    })
+                    .fold(true, |acc, elem| acc & elem)
+            })
+            .fold(true, |acc, elem| acc & elem);
         // Align points of triangles
         let points_passed = self
             .pairs
@@ -200,6 +315,8 @@ impl Mesh {
                 if let ControlFlow::Continue((p1, p2)) =
                     move_points(&self.points[a], &self.points[b])
                 {
+                    self.collision_groups.move_point(&a, &self.points[a], &p1);
+                    self.collision_groups.move_point(&b, &self.points[b], &p2);
                     self.points[a] = p1;
                     self.points[b] = p2;
                     false
@@ -209,7 +326,7 @@ impl Mesh {
             })
             //Bitwise-and to certainly prevent short-circuit behavior
             .fold(true, |acc, elem| acc & elem);
-        if points_passed && duals_passed {
+        if points_passed && coll_passed {
             ControlFlow::Break(())
         } else {
             ControlFlow::Continue(())
@@ -219,10 +336,7 @@ impl Mesh {
     pub fn test_collisions(&self) -> bool {
         for tri1 in self.tris.iter().copied() {
             for tri2 in self.tris.iter().copied() {
-                if tri2
-                    .iter()
-                    .any(|x| tri1.contains(x))
-                {
+                if tri2.iter().any(|x| tri1.contains(x)) {
                     // Don't need to test triangles that share an edge
                     continue;
                 }
@@ -283,28 +397,28 @@ fn sphere_rand(radius: f64) -> Vec3 {
 
 fn move_points(p1: &Vec3, p2: &Vec3) -> ControlFlow<(), (Vec3, Vec3)> {
     // Caculate the distance between the two points
-    let dist = distance(p1,p2);
+    let dist = distance(p1, p2);
     // If the distance is close enough to the error margin
     if (dist - 1.0).abs() < ARGS.error_margin {
         return ControlFlow::Break(());
     }
     // Else, we move them by 1/10th the distance with a touch of randomness
     let scalar = (1.0 - dist) * 0.1;
-    let offset1 = (*p1 - *p2).scale(scalar);// + sphere_rand(scalar * 0.7);
-    let offset2 = (*p2 - *p1).scale(scalar);// + sphere_rand(scalar * 0.7);
+    let offset1 = (*p1 - *p2).scale(scalar); // + sphere_rand(scalar * 0.7);
+    let offset2 = (*p2 - *p1).scale(scalar); // + sphere_rand(scalar * 0.7);
     ControlFlow::Continue((*p1 + offset1, *p2 + offset2))
 }
 
 fn move_duals(p1: &Vec3, p2: &Vec3) -> ControlFlow<(), (Vec3, Vec3)> {
     // Caculate the distance between the two points
     let min_dist = 1.0; // TOTO Add as argument
-    let dist = distance(p1,p2);
+    let dist = distance(p1, p2);
     if dist > min_dist {
         return ControlFlow::Break(());
     }
     let scalar = (min_dist - dist) * 0.6;
-    let offset1 = (*p1 - *p2).scale(scalar);// + sphere_rand(scalar * 0.7);
-    let offset2 = (*p2 - *p1).scale(scalar);// + sphere_rand(scalar * 0.7);
+    let offset1 = (*p1 - *p2).scale(scalar); // + sphere_rand(scalar * 0.7);
+    let offset2 = (*p2 - *p1).scale(scalar); // + sphere_rand(scalar * 0.7);
     ControlFlow::Continue((*p1 + offset1, *p2 + offset2))
 }
 
@@ -351,12 +465,43 @@ fn collision_partial(tri1: [Vec3; 3], tri2: [Vec3; 3]) -> bool {
     let origin0 = tri2[0];
     let origin1 = tri2[1];
     let origin2 = tri2[2];
-    (ray_triangle(&origin0, &(origin1 - origin0).into(), &vertex0, &vertex1, &vertex2)
-        && ray_triangle(&origin1, &(origin0 - origin1).into(), &vertex0, &vertex1, &vertex2))
-        || (ray_triangle(&origin0, &(origin2 - origin0).into(), &vertex0, &vertex1, &vertex2)
-            && ray_triangle(&origin2, &(origin0 - origin2).into(), &vertex0, &vertex1, &vertex2))
-        || (ray_triangle(&origin1, &(origin2 - origin1).into(), &vertex0, &vertex1, &vertex2)
-            && ray_triangle(&origin2, &(origin1 - origin2).into(), &vertex0, &vertex1, &vertex2))
+    (ray_triangle(
+        &origin0,
+        &(origin1 - origin0).into(),
+        &vertex0,
+        &vertex1,
+        &vertex2,
+    ) && ray_triangle(
+        &origin1,
+        &(origin0 - origin1).into(),
+        &vertex0,
+        &vertex1,
+        &vertex2,
+    )) || (ray_triangle(
+        &origin0,
+        &(origin2 - origin0).into(),
+        &vertex0,
+        &vertex1,
+        &vertex2,
+    ) && ray_triangle(
+        &origin2,
+        &(origin0 - origin2).into(),
+        &vertex0,
+        &vertex1,
+        &vertex2,
+    )) || (ray_triangle(
+        &origin1,
+        &(origin2 - origin1).into(),
+        &vertex0,
+        &vertex1,
+        &vertex2,
+    ) && ray_triangle(
+        &origin2,
+        &(origin1 - origin2).into(),
+        &vertex0,
+        &vertex1,
+        &vertex2,
+    ))
 }
 
 fn collision(tri1: [Vec3; 3], tri2: [Vec3; 3]) -> bool {
@@ -364,13 +509,16 @@ fn collision(tri1: [Vec3; 3], tri2: [Vec3; 3]) -> bool {
 }
 
 fn main() {
-    println!("Creating mesh with {} rings and {} triangles per point", ARGS.rings, ARGS.triangles_per_point);
+    println!(
+        "Creating mesh with {} rings and {} triangles per point",
+        ARGS.rings, ARGS.triangles_per_point
+    );
 
     println!("Creating points");
     if ARGS.animate {
         match std::fs::remove_dir_all("./output/") {
-            Ok(()) => {},
-            Err(x) if x.kind() == ErrorKind::NotFound => {},
+            Ok(()) => {}
+            Err(x) if x.kind() == ErrorKind::NotFound => {}
             Err(x) => panic!("Err: {x}"),
         }
         std::fs::create_dir("./output").unwrap();
@@ -463,7 +611,7 @@ fn save_mesh(mesh: &Mesh, filename: String) {
     let tri_mesh = TriMesh::new(verts, mesh.tris.clone());
     // And save that object into an .obj file
     match save_trimesh_ascii(&tri_mesh, filename) {
-        Ok(()) => {},
+        Ok(()) => {}
         Err(x) => panic!("Error: {x}"),
     }
 }
