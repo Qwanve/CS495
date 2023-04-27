@@ -77,41 +77,49 @@ struct CollisionGroups {
 impl CollisionGroups {
     fn new(rings: usize) -> Self {
         let size = rings * 2 + 20;
-        let groups: Vec<Vec<Vec<Vec<usize>>>> =
-            vec![vec![vec![Vec::<usize>::new(); size]; size]; size];
+        //TODO: Figure this out as a flat vec instead of a quadruply nested vec
+        let groups = vec![vec![vec![Vec::new(); size]; size]; size];
         Self {
-            groups: groups,
+            groups,
             offset: rings + 10,
         }
     }
 
-    fn add_point(&mut self, point: &usize, group: &[f64; 3]) {
+    fn add_point(&mut self, point: usize, group: [f64; 3]) {
         let [gx, gy, gz] = group;
         let offset = self.offset as f64;
-        self.groups[(*gx + offset) as usize][(*gy + offset) as usize][(*gz + offset) as usize].push(*point);
+        self.groups[(gx + offset) as usize][(gy + offset) as usize][(gz + offset) as usize]
+            .push(point);
     }
 
-    fn move_point(&mut self, point: &usize, old_group: &Vec3, new_group: &Vec3) {
-        let offset = self.offset as f64;
-        let old_c = *(old_group.coords);
-        let old_g = [(old_c.x + offset) as usize, (old_c.y + offset) as usize, (old_c.z + offset) as usize];
-        let new_c = *(new_group.coords);
-        let new_g = [(new_c.x + offset) as usize, (new_c.y + offset) as usize, (new_c.z + offset) as usize];
-        //println!("{old_c:?} {new_c:?}");
-        if (old_g != new_g) {
-            let [ox, oy, oz] = old_g;
-            let [nx, ny, nz] = new_g;
+    fn move_point(&mut self, point: usize, old_group: Vec3, new_group: Vec3) {
+        if old_group != new_group {
+            let offset = self.offset as f64;
+            // let old_c = old_group.coords;
+            let old_g = [
+                (old_group.x + offset) as usize,
+                (old_group.y + offset) as usize,
+                (old_group.z + offset) as usize,
+            ];
+            // let new_c = *(new_group.coords);
+            let new_g = [
+                (new_group.x + offset) as usize,
+                (new_group.y + offset) as usize,
+                (new_group.z + offset) as usize,
+            ];
+            //println!("{old_c:?} {new_c:?}");
+            let [oldx, oldy, oldz] = old_g;
+            let [newx, newy, newz] = new_g;
             //println!("Moving point {point} from [{ox}, {oy}, {oz}] to [{nx}, {ny}, {nz}]");
-            let oi = match self.groups[ox][oy][oz].iter().position(|x| *x == *point) {
-                Some(x) => x,
-                None => panic!("index {point} not found in {:?}", self.groups[ox][oy][oz]),
+            let Some(oi) = self.groups[ox][oy][oz].iter().position(|x| *x == point) else {
+                panic!("index {point} not found in {:?}", self.groups[ox][oy][oz]);
             };
-            self.groups[ox][oy][oz].remove(oi);
-            self.groups[nx][ny][nz].push(*point);
+            self.groups[oldx][oldy][oldz].remove(oi);
+            self.groups[newx][newy][newz].push(point);
         }
     }
 
-    fn get_neighbor_groups(&self, group: &[i32; 3]) -> Vec<[i32; 3]> {
+    fn get_neighbor_groups(&self, group: [i32; 3]) -> Vec<[i32; 3]> {
         let [gx, gy, gz] = group;
         let nums = [-2, -1, 0, 1, 2];
         let offset = self.offset as i32;
@@ -124,9 +132,10 @@ impl CollisionGroups {
             .collect()
     }
 
-    fn get_neighbor_points(&self, point: &usize, group: &[i32; 3]) -> Vec<usize> {
+    fn get_neighbor_points(&self, point: usize, group: [i32; 3]) -> Vec<usize> {
         let offset = self.offset as i32;
-        let v = self.get_neighbor_groups(group)
+        let v = self
+            .get_neighbor_groups(group)
             .iter()
             .map(|[x, y, z]| {
                 [
@@ -135,10 +144,10 @@ impl CollisionGroups {
                     (z + offset) as usize,
                 ]
             })
-            .map(|[x, y, z]| self.groups[x][y][z].clone())
-            .flatten()
+            .flat_map(|[x, y, z]| &self.groups[x][y][z])
+            .copied()
             .unique()
-            .filter(|p| p > point)
+            .filter(|p| *p > point)
             .collect();
         //println!("Point {point} neighbors: {v:?}");
         v
@@ -166,7 +175,7 @@ impl Mesh {
         // Generate number of points per ring
         // Formula found https://oeis.org/A001354
         let mut ring_counts = vec![0, ARGS.triangles_per_point];
-        for i in 2..(usize::from(rings) + 1) {
+        for i in 2..=usize::from(rings) {
             ring_counts
                 .push((ARGS.triangles_per_point - 4) * ring_counts[i - 1] - ring_counts[i - 2]);
         }
@@ -182,7 +191,7 @@ impl Mesh {
         // Create random points
         let mut points: Vec<Vec3> = Vec::new();
         points.push(Vec3::new(0.0, 0.0, 0.0));
-        collision_groups.add_point(&0, &[0.0, 0.0, 0.0]);
+        collision_groups.add_point(0, [0.0, 0.0, 0.0]);
         for (ring, ring_count) in ring_counts[1..].iter().copied().enumerate() {
             for i in 0..ring_count {
                 let angle = (i as f64) / (ring_count as f64) * std::f64::consts::TAU;
@@ -191,7 +200,7 @@ impl Mesh {
                 let y = distance * angle.sin();
                 let z = rng.gen_range(-0.1..0.1);
                 points.push(Vec3::new(x, y, z));
-                collision_groups.add_point(&(points.len() - 1), &[x, y, z]);
+                collision_groups.add_point(points.len() - 1, [x, y, z]);
             }
         }
         //println!("Groups: {:?}", collision_groups.groups);
@@ -240,8 +249,8 @@ impl Mesh {
 
         // Pull duals from existing pairs
         // TODO make this not O(n^3)
-        pairs.iter_mut().for_each(|p| p.sort());
-        pairs.sort();
+        // pairs.iter_mut().for_each(|p| p.sort());
+        // pairs.sort();
 
         Mesh {
             points,
@@ -282,10 +291,7 @@ impl Mesh {
                 let c = *self.points[a];
                 let group = [c.x as i32, c.y as i32, c.z as i32];
                 self.collision_groups
-                    .get_neighbor_points(
-                        &a,
-                        &group,
-                    )
+                    .get_neighbor_points(a, group)
                     .iter()
                     .copied()
                     //.filter(|b| !self.pairs.contains(&[a, *b]))
@@ -294,8 +300,8 @@ impl Mesh {
                             move_duals(&self.points[a], &self.points[b])
                         {
                             //println!("Pair ({a}, {b})");
-                            self.collision_groups.move_point(&a, &self.points[a], &p1);
-                            self.collision_groups.move_point(&b, &self.points[b], &p2);
+                            self.collision_groups.move_point(a, self.points[a], p1);
+                            self.collision_groups.move_point(b, self.points[b], p2);
                             self.points[a] = p1;
                             self.points[b] = p2;
                             false
@@ -315,8 +321,8 @@ impl Mesh {
                 if let ControlFlow::Continue((p1, p2)) =
                     move_points(&self.points[a], &self.points[b])
                 {
-                    self.collision_groups.move_point(&a, &self.points[a], &p1);
-                    self.collision_groups.move_point(&b, &self.points[b], &p2);
+                    self.collision_groups.move_point(a, self.points[a], p1);
+                    self.collision_groups.move_point(b, self.points[b], p2);
                     self.points[a] = p1;
                     self.points[b] = p2;
                     false
@@ -377,23 +383,23 @@ impl Mesh {
     }
 }
 
-fn sphere_rand(radius: f64) -> Vec3 {
-    let mut rng = thread_rng();
+// fn sphere_rand(radius: f64) -> Vec3 {
+//     let mut rng = thread_rng();
 
-    // Generate two random numbers between 0 and 1
-    let u = rng.gen::<f64>();
-    let v = rng.gen::<f64>();
+//     // Generate two random numbers between 0 and 1
+//     let u = rng.gen::<f64>();
+//     let v = rng.gen::<f64>();
 
-    // Calculate the longitude and latitude
-    let lon = 2.0 * std::f64::consts::PI * u;
-    let lat = f64::acos(2.0_f64.mul_add(v, -1.0)) - std::f64::consts::FRAC_PI_2;
+//     // Calculate the longitude and latitude
+//     let lon = 2.0 * std::f64::consts::PI * u;
+//     let lat = f64::acos(2.0_f64.mul_add(v, -1.0)) - std::f64::consts::FRAC_PI_2;
 
-    // Calculate the x, y, and z coordinates of the point
-    let x = f64::cos(lon) * f64::cos(lat) * radius;
-    let y = f64::sin(lon) * f64::cos(lat) * radius;
-    let z = f64::sin(lat) * radius;
-    Vec3::new(x, y, z)
-}
+//     // Calculate the x, y, and z coordinates of the point
+//     let x = f64::cos(lon) * f64::cos(lat) * radius;
+//     let y = f64::sin(lon) * f64::cos(lat) * radius;
+//     let z = f64::sin(lat) * radius;
+//     Vec3::new(x, y, z)
+// }
 
 fn move_points(p1: &Vec3, p2: &Vec3) -> ControlFlow<(), (Vec3, Vec3)> {
     // Caculate the distance between the two points
@@ -411,7 +417,7 @@ fn move_points(p1: &Vec3, p2: &Vec3) -> ControlFlow<(), (Vec3, Vec3)> {
 
 fn move_duals(p1: &Vec3, p2: &Vec3) -> ControlFlow<(), (Vec3, Vec3)> {
     // Caculate the distance between the two points
-    let min_dist = 1.0; // TOTO Add as argument
+    let min_dist = 1.0; // TODO Add as argument
     let dist = distance(p1, p2);
     if dist > min_dist {
         return ControlFlow::Break(());
