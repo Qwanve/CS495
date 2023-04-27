@@ -438,7 +438,7 @@ fn ray_triangle(
     vertex2: &Vec3,
 ) -> bool {
     let edge1 = *vertex1 - *vertex0;
-    let edge2 = *vertex2 - *vertex1;
+    let edge2 = *vertex2 - *vertex0;
     let h = ray_vector.coords.cross(&edge2);
     let a = edge1.dot(&h);
     if a > -f64::EPSILON && a < f64::EPSILON {
