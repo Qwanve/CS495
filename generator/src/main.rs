@@ -1,6 +1,7 @@
 use core::ops::ControlFlow;
 use meshx::io::save_trimesh_ascii;
 use rand::prelude::*;
+use std::collections::HashSet;
 use std::io::ErrorKind;
 use std::num::NonZeroUsize;
 use std::sync::atomic::AtomicBool;
@@ -69,7 +70,8 @@ impl Args {
 type Vec3 = Point3<f64>;
 
 struct CollisionGroups {
-    groups: Vec<Vec<Vec<Vec<usize>>>>,
+    // Maybe should be [[[HashShet<usize>]]]
+    groups: Vec<Vec<Vec<HashSet<usize>>>>,
     //groups: [[[Vec<usize>]]],
     offset: usize,
 }
@@ -78,7 +80,7 @@ impl CollisionGroups {
     fn new(rings: usize) -> Self {
         let size = rings * 2 + 20;
         //TODO: Figure this out as a flat vec instead of a quadruply nested vec
-        let groups = vec![vec![vec![Vec::new(); size]; size]; size];
+        let groups = vec![vec![vec![HashSet::new(); size]; size]; size];
         Self {
             groups,
             offset: rings + 10,
@@ -89,7 +91,7 @@ impl CollisionGroups {
         let [gx, gy, gz] = group;
         let offset = self.offset as f64;
         self.groups[(gx + offset) as usize][(gy + offset) as usize][(gz + offset) as usize]
-            .push(point);
+            .insert(point);
     }
 
     fn move_point(&mut self, point: usize, old_group: Vec3, new_group: Vec3) {
@@ -111,11 +113,11 @@ impl CollisionGroups {
             let [oldx, oldy, oldz] = old_g;
             let [newx, newy, newz] = new_g;
             //println!("Moving point {point} from [{ox}, {oy}, {oz}] to [{nx}, {ny}, {nz}]");
-            let Some(oi) = self.groups[ox][oy][oz].iter().position(|x| *x == point) else {
-                panic!("index {point} not found in {:?}", self.groups[ox][oy][oz]);
-            };
-            self.groups[oldx][oldy][oldz].remove(oi);
-            self.groups[newx][newy][newz].push(point);
+            // let Some(oi) = self.groups[ox][oy][oz].iter().position(|x| *x == point) else {
+            //     panic!("index {point} not found in {:?}", self.groups[ox][oy][oz]);
+            // };
+            self.groups[oldx][oldy][oldz].remove(&point);
+            self.groups[newx][newy][newz].insert(point);
         }
     }
 
