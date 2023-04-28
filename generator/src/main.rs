@@ -551,6 +551,7 @@ fn main() {
     let mut frame_number = 0;
     // While the timer hasn't surpassed the user given time-limit
     while start.elapsed() < ARGS.time() && !stop.load(std::sync::atomic::Ordering::Relaxed) {
+        assert!(mesh.points.iter().all(|p| p.iter().all(|c| c.is_finite())));
         if ARGS.animate {
             save_mesh(&mesh, format!("./output/frame-{frame_number:07}.obj"));
             frame_number += 1;
