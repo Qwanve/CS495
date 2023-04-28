@@ -7,6 +7,7 @@ use std::num::NonZeroUsize;
 use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
+use std::collections::HashMap;
 
 use duration_string::DurationString;
 
@@ -66,48 +67,53 @@ impl Args {
     }
 }
 
+fn truncate(value: f64) -> isize {
+    value.floor() as isize
+}
+
 /// A Vector type
 type Vec3 = Point3<f64>;
 
 struct CollisionGroups {
     // Maybe should be [[[HashShet<usize>]]]
-    groups: Vec<Vec<Vec<HashSet<usize>>>>,
-    //groups: [[[Vec<usize>]]],
-    offset: usize,
+    groups: HashMap<(isize, isize, isize), HashSet<usize>>,
 }
 
 impl CollisionGroups {
-    fn new(rings: usize) -> Self {
-        let size = rings * 2 + 20;
-        //TODO: Figure this out as a flat vec instead of a quadruply nested vec
-        let groups = vec![vec![vec![HashSet::new(); size]; size]; size];
+    fn new(_rings: usize) -> Self {
+        let groups = HashMap::new();
         Self {
             groups,
-            offset: rings + 10,
         }
     }
+    
+    fn get(&self, x: isize, y: isize, z: isize) -> &HashSet<usize> {
+        &self.groups[&(x, y, z)]
+    }
+    
+    fn get_mut(&mut self, x: isize, y: isize, z:isize) -> &mut HashSet<usize> {
+        self.groups.entry((x, y, z)).or_default()
+    }
 
-    fn add_point(&mut self, point: usize, group: [f64; 3]) {
+    fn add_point(&mut self, point: usize, group: [isize; 3]) {
         let [gx, gy, gz] = group;
-        let offset = self.offset as f64;
-        self.groups[(gx + offset) as usize][(gy + offset) as usize][(gz + offset) as usize]
+        self.get_mut(gx, gy, gz)
             .insert(point);
     }
 
     fn move_point(&mut self, point: usize, old_group: Vec3, new_group: Vec3) {
         if old_group != new_group {
-            let offset = self.offset as f64;
             // let old_c = old_group.coords;
             let old_g = [
-                (old_group.x + offset) as usize,
-                (old_group.y + offset) as usize,
-                (old_group.z + offset) as usize,
+                truncate(old_group.x),
+                truncate(old_group.y),
+                truncate(old_group.z),
             ];
             // let new_c = *(new_group.coords);
             let new_g = [
-                (new_group.x + offset) as usize,
-                (new_group.y + offset) as usize,
-                (new_group.z + offset) as usize,
+                truncate(new_group.x),
+                truncate(new_group.y),
+                truncate(new_group.z),
             ];
             //println!("{old_c:?} {new_c:?}");
             let [oldx, oldy, oldz] = old_g;
@@ -116,43 +122,32 @@ impl CollisionGroups {
             // let Some(oi) = self.groups[ox][oy][oz].iter().position(|x| *x == point) else {
             //     panic!("index {point} not found in {:?}", self.groups[ox][oy][oz]);
             // };
-            self.groups[oldx][oldy][oldz].remove(&point);
-            self.groups[newx][newy][newz].insert(point);
+            self.get_mut(oldx, oldy, oldz).remove(&point);
+            self.get_mut(newx, newy, newz).insert(point);
         }
     }
 
-    fn get_neighbor_groups(&self, group: [i32; 3]) -> Vec<[i32; 3]> {
+    fn get_neighbor_groups(&self, group: [isize; 3]) -> Vec<[isize; 3]> {
         let [gx, gy, gz] = group;
         let nums = [-2, -1, 0, 1, 2];
-        let offset = self.offset as i32;
         nums.iter()
             .cartesian_product(nums)
             .cartesian_product(nums)
             .map(|((x, y), z)| [*x, y, z])
             .map(|[x, y, z]| [gx + x, gy + y, gz + z])
-            //.filter(|[x, y, z]| (x.abs() < offset && y.abs() < offset && z.abs() < offset))
+            .filter(|[x, y, z]| self.groups.contains_key(&(*x, *y, *z)))
             .collect()
     }
 
-    fn get_neighbor_points(&self, point: usize, group: [i32; 3]) -> Vec<usize> {
-        let offset = self.offset as i32;
-        let v = self
+    fn get_neighbor_points(&self, point: usize, group: [isize; 3]) -> Vec<usize> {
+        self
             .get_neighbor_groups(group)
-            .iter()
-            .map(|[x, y, z]| {
-                [
-                    (x + offset) as usize,
-                    (y + offset) as usize,
-                    (z + offset) as usize,
-                ]
-            })
-            .flat_map(|[x, y, z]| &self.groups[x][y][z])
+            .into_iter()
+            .flat_map(|[x, y, z]| self.get(x, y, z))
             .copied()
             .unique()
             .filter(|p| *p > point)
-            .collect();
-        //println!("Point {point} neighbors: {v:?}");
-        v
+            .collect()
     }
 }
 
@@ -193,7 +188,7 @@ impl Mesh {
         // Create random points
         let mut points: Vec<Vec3> = Vec::new();
         points.push(Vec3::new(0.0, 0.0, 0.0));
-        collision_groups.add_point(0, [0.0, 0.0, 0.0]);
+        collision_groups.add_point(0, [0, 0, 0]);
         for (ring, ring_count) in ring_counts[1..].iter().copied().enumerate() {
             for i in 0..ring_count {
                 let angle = (i as f64) / (ring_count as f64) * std::f64::consts::TAU;
@@ -202,7 +197,7 @@ impl Mesh {
                 let y = distance * angle.sin();
                 let z = rng.gen_range(-0.1..0.1);
                 points.push(Vec3::new(x, y, z));
-                collision_groups.add_point(points.len() - 1, [x, y, z]);
+                collision_groups.add_point(points.len() - 1, [truncate(x), truncate(y), truncate(z)]);
             }
         }
         //println!("Groups: {:?}", collision_groups.groups);
@@ -291,7 +286,7 @@ impl Mesh {
         let coll_passed = (0..self.points.len())
             .map(|a| {
                 let c = *self.points[a];
-                let group = [c.x as i32, c.y as i32, c.z as i32];
+                let group = [truncate(c.x), truncate(c.y), truncate(c.z)];
                 self.collision_groups
                     .get_neighbor_points(a, group)
                     .iter()
