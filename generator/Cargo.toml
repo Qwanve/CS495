@@ -10,9 +10,8 @@ clap = { version = "4.2.1", features = ["derive"] }
 duration-string = "0.3.0"
 indicatif = "0.17.3"
 lazy_static = "1.4.0"
-rand = "0.8.5"
-meshx = "0.5.2"
+meshx = { version = "0.5.2", default-features = false, features=["objio", "io"]}
 ctrlc = "3.2.5"
-rayon = "1.7.0"
-nalgebra = "0.32.2"
+nalgebra = "0.30"
 itertools = "0.10.5"
+fastrand = "1.9.0"

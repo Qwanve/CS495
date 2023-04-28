@@ -1,6 +1,5 @@
 use core::ops::ControlFlow;
 use meshx::io::save_trimesh_ascii;
-use rand::prelude::*;
 use std::collections::HashSet;
 use std::io::ErrorKind;
 use std::num::NonZeroUsize;
@@ -18,8 +17,6 @@ use clap::Parser;
 use lazy_static::lazy_static;
 
 use meshx::TriMesh;
-
-use rayon::prelude::*;
 
 use nalgebra::distance;
 use nalgebra::geometry::Point3;
@@ -167,7 +164,7 @@ impl Mesh {
     /// Creates a new mesh with the proper amount of points
     pub fn new(rings: NonZeroUsize) -> Mesh {
         // Initialize random for later
-        let mut rng = thread_rng();
+        let rng = fastrand::Rng::new();
 
         // Generate number of points per ring
         // Formula found https://oeis.org/A001354
@@ -195,7 +192,7 @@ impl Mesh {
                 let distance = (ring as f64) + 1.0;
                 let x = distance * angle.cos();
                 let y = distance * angle.sin();
-                let z = rng.gen_range(-0.1..0.1);
+                let z = rng.f64() * 0.2 - 0.1;
                 points.push(Vec3::new(x, y, z));
                 collision_groups.add_point(points.len() - 1, [truncate(x), truncate(y), truncate(z)]);
             }
