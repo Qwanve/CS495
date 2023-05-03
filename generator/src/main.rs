@@ -553,9 +553,7 @@ fn main() {
     while start.elapsed() < ARGS.time() && !stop.load(std::sync::atomic::Ordering::Relaxed) {
         assert!(mesh.points.iter().all(|p| p.iter().all(|c| c.is_finite())));
 
-        // Restart if colliding
-        if (mesh.test_collisions()) {
-            println!("Restarting due to collision.");
+        if (start.elapsed() > Duration::from_secs(5) && mesh.test_collisions()) {
             mesh = Mesh::new(ARGS.rings);
             frame_number = 0;
             start = Instant::now();
