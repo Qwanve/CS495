@@ -549,14 +549,21 @@ fn main() {
     );
 
     let mut frame_number = 0;
+    let mut attempts = 0;
     // While the timer hasn't surpassed the user given time-limit
     while start.elapsed() < ARGS.time() && !stop.load(std::sync::atomic::Ordering::Relaxed) {
         assert!(mesh.points.iter().all(|p| p.iter().all(|c| c.is_finite())));
 
-        if (start.elapsed() > Duration::from_secs(5) && mesh.test_collisions()) {
-            mesh = Mesh::new(ARGS.rings);
-            frame_number = 0;
-            start = Instant::now();
+        if start.elapsed() > Duration::from_secs(5) && mesh.test_collisions() {
+            // Restart if colliding
+            attempts += 1;
+            pb.suspend(|| {
+                println!("Restarting due to collision. Attempts: {attempts}");
+                mesh = Mesh::new(ARGS.rings);
+                frame_number = 0;
+                start = Instant::now();
+            });
+            pb.reset_elapsed();
         }
 
         if ARGS.animate {
