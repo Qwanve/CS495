@@ -540,7 +540,7 @@ fn main() {
 
     println!("Moving points into proper place");
     // Start a timer to have time bounded ending
-    let start = Instant::now();
+    let mut start = Instant::now();
 
     // Create a progress bar for the user
     let pb = ProgressBar::new(ARGS.time().as_millis() as u64);
@@ -552,6 +552,15 @@ fn main() {
     // While the timer hasn't surpassed the user given time-limit
     while start.elapsed() < ARGS.time() && !stop.load(std::sync::atomic::Ordering::Relaxed) {
         assert!(mesh.points.iter().all(|p| p.iter().all(|c| c.is_finite())));
+
+        // Restart if colliding
+        if (mesh.test_collisions()) {
+            println!("Restarting due to collision.");
+            mesh = Mesh::new(ARGS.rings);
+            frame_number = 0;
+            start = Instant::now();
+        }
+
         if ARGS.animate {
             save_mesh(&mesh, format!("./output/frame-{frame_number:07}.obj"));
             frame_number += 1;
